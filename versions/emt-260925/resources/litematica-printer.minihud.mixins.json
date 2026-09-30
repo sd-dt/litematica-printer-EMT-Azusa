@@ -1,0 +1,13 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "package": "me.aleksilassila.litematica.printer.mixin.compat",
+  "compatibilityLevel": "JAVA_25",
+  "plugin": "me.aleksilassila.litematica.printer.mixin.compat.MiniHudMixinPlugin",
+  "client": [
+    "MixinMiniHudRenderHandler"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
