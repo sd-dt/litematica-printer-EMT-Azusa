@@ -4,11 +4,11 @@
 
 # litematica-printer-EMT-Azusa
 
-**基于 [PetraSM 的 litematica-printer-EMT](https://github.com/PetraSM)（EMT+260925）的个人改写版**
+**基于 [MoMortis 的 litematica-printer-EMT](https://github.com/MoMortis/litematica-printer-EMT)（EMT+260925）的个人改写版**
 
 投影打印机 · 球形放置 / 平面无边界挖掘 / 发包限流 / 自动工具切换 / 简单排流体 / 破基岩
 
-当前版本：**litematica-printer-EMT-Azusa-dt261001j-26.2** ｜ 游戏版本：Minecraft **26.2** + Fabric ｜ 许可：**AGPL-3.0**
+当前版本：**litematica-printer-EMT-Azusa-dt261001k-26.2** ｜ 游戏版本：Minecraft **26.2** + Fabric ｜ 许可：**AGPL-3.0**
 
 仓库地址：`https://github.com/sd-dt/litematica-printer-EMT-Azusa`
 
@@ -18,7 +18,7 @@
 
 ## 这是什么
 
-这是 [litematica-printer](https://github.com/aleksilassila/litematica-printer) → PetraSM 的 **EMT** 分支 → 我（`sd_dt`）的**个人改写版**。
+这是 [litematica-printer](https://github.com/aleksilassila/litematica-printer) → MoMortis 的 **EMT** 分支 → 我（`sd_dt`）的**个人改写版**。
 以官方 **EMT+260925**（26.2 内层）为基线，把此前积累的一批改动逐项搬了过来，并保留上游全部功能。
 
 > 只做了客户端逻辑与配置界面层级的改动，**不包含任何服务端组件**；使用时请遵守你所游玩服务器的规则。
@@ -77,7 +77,7 @@
 
 1. 需要 Minecraft **26.2** + Fabric Loader。
 2. 依赖：[malilib](https://github.com/maruohon/malilib) ≥ 0.29.6、[litematica](https://github.com/maruohon/litematica) ≥ 0.28.8、`fabric-content-registries-v0`（Fabric API 模块）。
-3. 把 `litematica-printer-EMT-Azusa-dt261001j-26.2.jar` 放进 `.minecraft/mods/`。
+3. 把 `litematica-printer-EMT-Azusa-dt261001k-26.2.jar` 放进 `.minecraft/mods/`。
 4. **同一时间只能有一个 litematica-printer 系模组**（本改版与上游 EMT、其他分支不能共存，mod id 都是 `litematica-printer`）。
 
 ## 从源码构建
@@ -117,7 +117,7 @@ powershell -File scripts/verify-rebuild.ps1 -Line emt-260925
 ## 致谢与许可
 
 * 原模组：[aleksilassila/litematica-printer](https://github.com/aleksilassila/litematica-printer)
-* EMT 分支与本次改写所基于的基线：[PetraSM](https://github.com/PetraSM) 的 **litematica-printer-EMT (EMT+260925)**
-* 本改版作者：**sd_dt**、**PetraSM**、**deepseekfl4.1**
+* EMT 分支与本次改写所基于的基线：[MoMortis](https://github.com/MoMortis/litematica-printer-EMT) 的 **litematica-printer-EMT (EMT+260925)**
+* 本改版作者：**sd_dt**、**MoMortis**、**deepseekfl4.1**
 
 本项目沿用上游许可：**AGPL-3.0**。你可以自由使用、修改、再分发，但**必须保留同样的许可与署名**，并且分发修改版时**必须提供完整源码**。
