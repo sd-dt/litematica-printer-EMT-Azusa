@@ -1,0 +1,31 @@
+package me.aleksilassila.litematica.printer.mixin.printer.malilib.config;
+
+import fi.dy.masa.malilib.config.IConfigBase;
+import fi.dy.masa.malilib.config.options.ConfigBase;
+import me.aleksilassila.litematica.printer.mixin_extension.ConfigExtension;
+import me.aleksilassila.litematica.printer.utils.MessageUtils;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+
+@Mixin(
+   value = {IConfigBase.class},
+   remap = false
+)
+public interface MixinIConfigBase {
+   @Inject(
+      method = {"getConfigGuiDisplayName"},
+      at = {@At("HEAD")},
+      cancellable = true,
+      remap = false
+   )
+   default void litematica_printer$getConfigGuiDisplayName(CallbackInfoReturnable<String> cir) {
+      if (this instanceof ConfigBase<?> configBase
+         && configBase instanceof ConfigExtension extension
+         && extension.litematica_printer$getTranslateNameKey() != null) {
+         String translateKey = extension.litematica_printer$getTranslateNameKey();
+         cir.setReturnValue(MessageUtils.translatable(translateKey).getString());
+      }
+   }
+}

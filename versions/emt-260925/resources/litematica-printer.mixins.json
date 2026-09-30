@@ -1,0 +1,53 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "me.aleksilassila.litematica.printer.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "mixins": [
+    "printer.litematica.EasyPlaceUtilsAccessor",
+    "printer.litematica.InventoryUtilsAccessor",
+    "printer.litematica.SchematicVerifierAccessor",
+    "printer.litematica.SchematicPlacementAccessor",
+    "printer.litematica.MixinInventoryUtils",
+    "printer.litematica.MixinSchematicPlacement",
+    "printer.litematica.MixinWorldUtils",
+    "printer.malilib.config.MixinConfigBase",
+    "printer.malilib.config.MixinIConfigBase",
+    "printer.mc.MixinBlockItem",
+    "printer.mc.MixinConnection",
+    "printer.mc.MixinServerboundMovePlayerPacket"
+  ],
+  "client": [
+    "MixinClientPacketListener",
+    "MixinContainerScreenGuard",
+    "MixinMinecraftManualUse",
+    "openinv.MixinMinecraftClient",
+    "openinv.MixinGuiScreenGuard",
+    "printer.litematica.gui.MixinLitematicaGuiMainMenu",
+    "printer.litematica.MixinChunkRendererSchematicVbo",
+    "printer.litematica.MixinWorldRendererSchematic",
+    "printer.malilib.MixinAbstractCraftingMenu",
+    "printer.malilib.MixinGuiStringListEdit",
+      "printer.malilib.MixinWidgetStringListEditEntry",
+      "printer.malilib.WidgetConfigOptionBaseAccessor",
+
+    "printer.mc.MixinClientLevel",
+    "printer.mc.MixinClientPacketListener",
+    "printer.mc.MixinDebugRenderer",
+    "printer.mc.MixinGui",
+    "printer.mc.MixinKeyboardInput",
+    "printer.mc.MixinLivingEntity",
+    "printer.mc.MixinLocalPlayer",
+    "printer.mc.MixinLocalPlayerGo",
+    "printer.mc.MixinMultiPlayerGameMode",
+    "printer.mc.MixinMouseHandler",
+    "printer.mc.ClientInputAccessor",
+    "printer.mc.BeaconBlockEntityAccessor",
+    "printer.mc.BeaconButtonAccessor",
+    "printer.mc.BeaconScreenMixin",
+    "printer.tweakeroo.MixinInputHandler"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

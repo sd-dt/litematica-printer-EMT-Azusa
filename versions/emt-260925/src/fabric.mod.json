@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "id": "litematica-printer",
+  "version": "EMT+260925",
+  "icon": "assets/litematica-printer/icon.png",
+  "name": "litematica-printer-EMT",
+  "authors": [
+    "PetraSM"
+  ],
+  "license": "AGPL-3.0",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "me.aleksilassila.litematica.printer.LitematicaPrinterMod"
+    ],
+    "client": [
+      "me.aleksilassila.litematica.printer.LitematicaPrinterMod"
+    ],
+    "modmenu": [
+      "me.aleksilassila.litematica.printer.config.ModMenu"
+    ]
+  },
+  "mixins": [
+    "litematica-printer.mixins.json"
+  ],
+  "depends": {
+    "minecraft": "\u003e\u003d26.2",
+    "malilib": "\u003e\u003d0.29.6",
+    "litematica": "\u003e\u003d0.28.8",
+    "fabric-content-registries-v0": "*"
+  },
+  "custom": {
+    "modmenu": {
+      "parent": "litematica-printer-wrapper"
+    }
+  },
+  "jars": [
+    {
+      "file": "META-INF/jars/pinyin4j-2.5.1.jar"
+    }
+  ]
+}
