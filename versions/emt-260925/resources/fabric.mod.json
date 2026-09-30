@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
   "id": "litematica-printer",
-  "version": "Azusa-dt261001j-26.2",
+  "version": "Azusa-dt261001k-26.2",
   "icon": "assets/litematica-printer/icon.png",
   "name": "litematica-printer-EMT-Azusa",
   "authors": [
     "sd_dt",
-    "PetraSM",
+    "MoMortis",
     "deepseekfl4.1"
   ],
   "license": "AGPL-3.0",
@@ -43,7 +43,7 @@
       "file": "META-INF/jars/pinyin4j-2.5.1.jar"
     }
   ],
-  "description": "litematica-printer-EMT-Azusa —— 基于 PetraSM 的 litematica-printer-EMT (EMT+260925) 的个人改写版：球形放置 / 平面无边界挖掘 / 发包限流与重置 / 自动工具切换 / 简单排流体 / 破基岩自研实现 / MiniHUD 工作状态 / 副手放置与告示牌修复等。源码与下载：https://github.com/sd-dt/litematica-printer-EMT-Azusa",
+  "description": "litematica-printer-EMT-Azusa —— 基于 MoMortis 的 litematica-printer-EMT (EMT+260925)：球形放置 / 平面无边界挖掘 / 发包限流与重置 / 自动工具切换 / 简单排流体 / 破基岩自研实现 / MiniHUD 工作状态 / 副手放置与告示牌修复等。源码与下载：https://github.com/sd-dt/litematica-printer-EMT-Azusa",
   "contact": {
     "homepage": "https://github.com/sd-dt/litematica-printer-EMT-Azusa",
     "sources": "https://github.com/sd-dt/litematica-printer-EMT-Azusa",
