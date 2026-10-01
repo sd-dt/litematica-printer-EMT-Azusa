@@ -8,9 +8,12 @@
 
 投影打印机 · 球形放置 / 平面无边界挖掘 / 发包限流 / 自动工具切换 / 简单排流体 / 破基岩
 
-当前版本：**litematica-printer-EMT-Azusa-dt261001k-26.2** ｜ 游戏版本：Minecraft **26.2** + Fabric ｜ 许可：**AGPL-3.0**
+当前版本：**litematica-printer-EMT-Azusa-dt261001u-26.2** ｜ 游戏版本：Minecraft **26.2** + Fabric ｜ 许可：**AGPL-3.0**
 
 仓库地址：`https://github.com/sd-dt/litematica-printer-EMT-Azusa`
+
+
+**[中文](README.md)** | [English](README_EN.md)
 
 </div>
 
@@ -77,7 +80,7 @@
 
 1. 需要 Minecraft **26.2** + Fabric Loader。
 2. 依赖：[malilib](https://github.com/maruohon/malilib) ≥ 0.29.6、[litematica](https://github.com/maruohon/litematica) ≥ 0.28.8、`fabric-content-registries-v0`（Fabric API 模块）。
-3. 把 `litematica-printer-EMT-Azusa-dt261001k-26.2.jar` 放进 `.minecraft/mods/`。
+3. 把 `litematica-printer-EMT-Azusa-dt261001u-26.2.jar` 放进 `.minecraft/mods/`。
 4. **同一时间只能有一个 litematica-printer 系模组**（本改版与上游 EMT、其他分支不能共存，mod id 都是 `litematica-printer`）。
 
 ## 从源码构建
