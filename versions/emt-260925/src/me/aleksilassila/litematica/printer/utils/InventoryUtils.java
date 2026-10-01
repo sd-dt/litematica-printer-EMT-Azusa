@@ -549,6 +549,53 @@ public class InventoryUtils {
     </ol>
     * 只有"严格更好"才换手；工具在快捷栏就直接选中，在背包里就换到当前手持槽。
     */
+   private static long lastToolDemandMs;
+
+   /**
+    * 兼容快捷潜影盒自动取货：背包里找不到可用工具时，按方块类型向潜影盒登记工具需求。
+    * <p>
+    * 工具具体是哪一把事先不知道，所以按物品标签（镐/斧/锹/锄）登记，最多 6 个候选，
+    * 每秒最多登记一次，避免刷屏式开盒。潜影盒取货开着的时候才会生效。
+    */
+   public static void requestToolFromShulker(BlockState blockState) {
+      if (blockState == null || blockState.isAir() || !Configs.Core.QUICK_SHULKER.getBooleanValue()) {
+         return;
+      }
+
+      long now = System.currentTimeMillis();
+      if (now - lastToolDemandMs < 1000L) {
+         return;
+      }
+
+      lastToolDemandMs = now;
+      net.minecraft.tags.TagKey<net.minecraft.world.item.Item> tag = null;
+      if (blockState.is(net.minecraft.tags.BlockTags.MINEABLE_WITH_PICKAXE)) {
+         tag = net.minecraft.tags.ItemTags.PICKAXES;
+      } else if (blockState.is(net.minecraft.tags.BlockTags.MINEABLE_WITH_AXE)) {
+         tag = net.minecraft.tags.ItemTags.AXES;
+      } else if (blockState.is(net.minecraft.tags.BlockTags.MINEABLE_WITH_SHOVEL)) {
+         tag = net.minecraft.tags.ItemTags.SHOVELS;
+      } else if (blockState.is(net.minecraft.tags.BlockTags.MINEABLE_WITH_HOE)) {
+         tag = net.minecraft.tags.ItemTags.HOES;
+      }
+
+      if (tag == null) {
+         return;
+      }
+
+      int demands = 0;
+      for (net.minecraft.world.item.Item item : net.minecraft.core.registries.BuiltInRegistries.ITEM) {
+         if (demands >= 6) {
+            break;
+         }
+
+         if (item.getDefaultInstance().is(tag)) {
+            me.aleksilassila.litematica.printer.printer.zxy.inventory.InventoryUtils.addQuickShulkerDemand(item);
+            demands++;
+         }
+      }
+   }
+
    public static boolean switchToBestTool(LocalPlayer player, BlockState blockState) {
       if (player == null || blockState == null || blockState.isAir()) {
          return false;

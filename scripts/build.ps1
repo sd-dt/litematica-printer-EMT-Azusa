@@ -201,6 +201,19 @@ if (Test-Path -LiteralPath $Stage) { Remove-Item -LiteralPath $Stage -Recurse -F
 New-Item -ItemType Directory -Force -Path $Stage | Out-Null
 Copy-Item -Path (Join-Path $ResDir '*') -Destination $Stage -Recurse -Force
 Copy-Item -Path (Join-Path $Classes '*') -Destination $Stage -Recurse -Force
+
+    # 把文件名里的版本写进 fabric.mod.json，保证「游戏里显示的版本」与「文件名」一致
+    $stagedModJson = Join-Path $Stage 'fabric.mod.json'
+    # 校验重建走 -OutJar（临时文件名），此时不要写版本号，否则两边必然不一致
+    if (-not $OutJar -and (Test-Path -LiteralPath $stagedModJson)) {
+        $modVer  = 'Azusa-' + (($Name -replace '\.jar$', '') -replace '^litematica-printer-EMT-Azusa-', '')
+        $modText = [System.IO.File]::ReadAllText($stagedModJson)
+        $modText = [System.Text.RegularExpressions.Regex]::Replace($modText, '"version"\s*:\s*"[^"]*"', '"version": "' + $modVer + '"', 1)
+        [System.IO.File]::WriteAllText($stagedModJson, $modText, (New-Object System.Text.UTF8Encoding($false)))
+        # 同时写回源资源，保证「重建校验」时读到的版本号与发布件一致
+        [System.IO.File]::WriteAllText((Join-Path $ResDir 'fabric.mod.json'), $modText, (New-Object System.Text.UTF8Encoding($false)))
+        Write-Host "[ .. ] fabric.mod.json version -> $modVer"
+    }
 if (Test-Path -LiteralPath $jarPath) { Remove-Item -LiteralPath $jarPath -Force }
 # 只用 jar.exe --create（.NET ZipFile 写出的 zip 有时 Fabric 读不到条目）
 & $JarExe --create --file $jarPath -C $Stage .
