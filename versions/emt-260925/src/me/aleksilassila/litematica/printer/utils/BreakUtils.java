@@ -196,6 +196,21 @@ public class BreakUtils {
    public static boolean trySwitchToEffectiveTool(BlockPos pos, BlockState blockState) {
       if (pos != null && blockState != null && !blockState.isAir() && !(blockState.getBlock() instanceof LiquidBlock)) {
          LocalPlayer player = client.player;
+         // 原生「自动工具切换」（核心 → 自动工具切换）：不依赖 Tweakeroo，也不依赖 Litematica 的 pick block 槽位配置
+         if (Configs.Core.AUTO_TOOL_SWITCH.getBooleanValue()) {
+            if (player == null) {
+               return false;
+            } else {
+               boolean switched = InventoryUtils.switchToBestTool(player, blockState);
+                  if (!switched) {
+                     // 背包里没有可用工具 → 让快捷潜影盒取货去盒子里拿（潜影盒自动取货开着时才有动作）
+                     InventoryUtils.requestToolFromShulker(blockState);
+                  }
+
+                  return switched || protectCurrentToolBeforeBreak(blockState);
+            }
+         }
+
          boolean tweakerooToolSwitch = ModUtils.isTweakerooLoaded() && ModUtils.isToolSwitchEnabled();
          if (player != null
             && tweakerooToolSwitch
