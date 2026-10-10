@@ -50,7 +50,9 @@ final class MineToolSession {
          }
       }
 
-      if (this.sessionToolItem != null && this.toolSessionRemaining > 0) {
+      // 只要前沿里还有"用同一种工具"的目标，就继续用当前工具：换工具会清零挖掘进度，
+      // 混着石头/泥土的地形上频繁换镐子/铲子，表现就是"换完工具卡一下才挖得动"、工具还会跳来跳去。
+      if (this.sessionToolItem != null) {
          double nearestDistance = distanceScore(player, nearest);
 
          for (MineBreakExecutor.Target targetx : candidates) {
@@ -123,7 +125,8 @@ final class MineToolSession {
    }
 
    private int getToolSessionQuota() {
-      return 8;
+      // 一次"会话"里最多连着挖多少个同工具的目标（只是兜底，正常靠 selectTarget 的同工具延续）
+      return 32;
    }
 
    static double distanceScore(LocalPlayer player, MineBreakExecutor.Target target) {

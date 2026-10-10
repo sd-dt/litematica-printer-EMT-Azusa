@@ -548,6 +548,10 @@ public class InventoryUtils {
     *   <li>否则比破坏速度（{@link #getDestroyProgress}，含工具挖掘速度与附魔/药水加成）。</li>
     </ol>
     * 只有"严格更好"才换手；工具在快捷栏就直接选中，在背包里就换到当前手持槽。
+    * <p>
+    * <b>返回值语义（潜影盒取货依赖它）</b>：{@code true} = "已经换好"或"手上的够用、背包里不用再找"；
+    * {@code false} = "背包里找不到可用的（包括手上那把太破损）"。调用方只在 false 时向潜影盒登记工具需求 ——
+    * 以前"手上已是最优"也返回 false，结果潜影盒把同样的镐子又掏了一把出来。
     */
    private static long lastToolDemandMs;
 
@@ -687,7 +691,10 @@ public class InventoryUtils {
                );
             }
 
-            return false;
+            // 手上的工具已经够用：返回 true（"背包里不用再找"）——
+            // 否则调用方会误以为"背包里没工具"，去潜影盒把同样的镐子又拿出来一把。
+            // 手上工具太破损（不允许用）或进度为 0 时仍返回 false，让潜影盒取货有机会换新的。
+            return currentAllowed && currentProgress > 0.0F;
          }
       }
 
@@ -708,7 +715,9 @@ public class InventoryUtils {
             );
          }
 
-         return false;
+         // 手持槽本身就是最优 → 返回 true（不必去潜影盒取货）；
+         // bestSlot == -1（背包里一个候选都没有，例如需要精准采集但没有）→ 返回 false，允许潜影盒取货。
+         return bestSlot == selectedSlot;
       }
 
       boolean switched = swapToolToSelectedSlot(bestSlot, player);

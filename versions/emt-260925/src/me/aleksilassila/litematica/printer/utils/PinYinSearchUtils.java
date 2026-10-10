@@ -95,12 +95,18 @@ public class PinYinSearchUtils {
       return fullPinyinList;
    }
 
+   /**
+    * 字符串匹配：部分（包含）匹配现在是<b>默认</b>行为。
+    * <p>
+    * 以前只有条目带 {@code c} 规则才做包含匹配，导致「矿」这种条目必须整名精确相等才生效。
+    * 现在所有走 {@link #matchName} 的黑/白名单（破基岩列表、挖掘黑/白名单、流体列表、
+    * 填充列表、可替换列表、扫描白名单……）都自动支持：
+    * 中文显示名包含、拼音包含（如 "kuang" 匹配 石矿/矿石）、注册名包含（如 "stone" 匹配 stone_bricks）。
+    * {@code c} 规则保留解析（兼容旧条目），但已无额外作用。
+    */
    public static boolean matchString(String targetStr, String matchStr, String[] matchRules) {
-      if (targetStr != null && matchStr != null) {
-         boolean enableContainsMatch = Arrays.asList(matchRules).contains("c");
-         boolean containsMatchResult = enableContainsMatch && targetStr.contains(matchStr);
-         boolean exactMatchResult = targetStr.equals(matchStr);
-         return containsMatchResult || exactMatchResult;
+      if (targetStr != null && matchStr != null && !matchStr.isEmpty()) {
+         return targetStr.contains(matchStr);
       } else {
          return false;
       }

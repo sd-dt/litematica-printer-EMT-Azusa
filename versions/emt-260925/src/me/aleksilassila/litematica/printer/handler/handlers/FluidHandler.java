@@ -2,7 +2,6 @@ package me.aleksilassila.litematica.printer.handler.handlers;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -15,6 +14,8 @@ import me.aleksilassila.litematica.printer.utils.BreakUtils;
 import me.aleksilassila.litematica.printer.utils.InventoryUtils;
 import me.aleksilassila.litematica.printer.utils.PinYinSearchUtils;
 import me.aleksilassila.litematica.printer.utils.PlayerUtils;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Block;
@@ -25,7 +26,6 @@ import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluid;
-import net.minecraft.world.level.material.Fluids;
 import net.minecraft.core.registries.BuiltInRegistries;
 
 public class FluidHandler extends ClientPlayerTickHandler {
@@ -36,7 +36,12 @@ public class FluidHandler extends ClientPlayerTickHandler {
    /** 按消息类型分别限流：同一条日志最多每 500ms 打一次，互不挤占 */
    private static final java.util.Map<String, Long> diagLast = new java.util.HashMap<>();
 
-   private static void diag(String msg) {
+   /** 诊断日志：只在（核心 → 调试输出）打开时输出，按消息类型 500ms 限流，互不挤占。包私有：供 FluidDrainBase / FluidInstantBreak 复用 */
+   static void diag(String msg) {
+      if (!Configs.Core.DEBUG_OUTPUT.getBooleanValue()) {
+         return;
+      }
+
       String key = msg.length() > 24 ? msg.substring(0, 24) : msg;
       long now = System.currentTimeMillis();
       Long last = diagLast.get(key);
@@ -45,34 +50,72 @@ public class FluidHandler extends ClientPlayerTickHandler {
       }
 
       diagLast.put(key, now);
-      LOGGER.info("[fluid-diag] " + msg);
+      LOGGER.info("[fluid-simple] " + msg);
    }
    /** 水平四邻（无限水的连通只可能发生在水平方向） */
    private static final Direction[] HORIZONTAL = new Direction[]{
       Direction.NORTH, Direction.SOUTH, Direction.WEST, Direction.EAST
    };
-   /** 盖住之后最多等这么多 tick 让相邻水源也被盖住，超时就照挖（防止选区外的水源把流程卡死） */
-   private static final int NEIGHBOUR_WAIT_TICKS = 10;
+   /**
+    * 盖住之后最多等这么多 tick 让相邻水源也被盖住，超时就照挖（防止选区外的水源把流程卡死）。
+    * 挖掘部分的节奏是"能挖就挖"：这里从 10 压到 2 —— 个别格位即使被渗满，
+    * 扫描下一轮会重新盖住，比干等半秒快得多。
+    */
+   private static final int NEIGHBOUR_WAIT_TICKS = 2;
+   /**
+    * 每 tick 最多放出几个"已盖住、可挖"的格位给破坏队列（兜底下限）。
+    * 破坏队列与挖掘同一条路：能秒破的方块（挖掘进度已满）在同一 tick 内会连续 pop 多个，
+    * 所以这里放宽到 8，让队列永远有活干 —— 视觉上就是"多个方块同时碎掉"。
+    * 实际放出数由 {@link #removalsPerTick()} 决定，跟随挖掘分类的配置。
+    */
+   private static final int MAX_REMOVALS_PER_TICK = 8;
+
+   /**
+    * 挖除数量同步「挖掘 → 每 tick 破坏方块数」配置：
+    * 挖掘配 0（不限）按 32 处理；配 1~7 时取 16 兜底（排流体不许比现状更慢）；
+    * 配 8 以上完全跟随挖掘的值 —— 调挖掘的速度配置，排流体挖填充块同步变快。
+    */
+   private static int removalsPerTick() {
+      int mine = Configs.Mine.BREAK_BLOCKS_PER_TICK.getIntegerValue();
+      if (mine <= 0) {
+         return 32;
+      }
+
+      return Math.max(16, mine);
+   }
    /** 简单排流体：已经盖住、等待挖除的格位 -> 放下填充块时的游戏刻 */
    private final Map<Long, Long> simplePlaced = new HashMap<>();
    /** 简单排流体：已经入队等待挖除的格位（挖失败会按退避重试） */
    private final Map<Long, PendingRemoval> simplePending = new HashMap<>();
    /** 本 tick 已经开了破坏：不再放置（否则换回填充物会把挖掘进度打断，看起来就是"挖得慢"） */
    private boolean holdIterationThisTick;
-   private List<String> fillBlocks = new ArrayList<>();
-   private List<Item> fillItems = new ArrayList<>();
+   // 下面四个字段放宽为包私有：FluidDrainBase（基础逻辑·冻结区）与 FluidInstantBreak（秒破移植区）需要读取
+   List<String> fillBlocks = new ArrayList<>();
+   List<Item> fillItems = new ArrayList<>();
    /** 简单排流体专用：过滤掉重力方块与流体之后的填充物（沙子排完水会塌，不能用） */
    private List<Item> simpleFillItems = List.of();
-   private List<String> fluidBlocks = new ArrayList<>();
-   private List<Fluid> fluids = List.of();
+   List<String> fluidBlocks = new ArrayList<>();
+   List<Fluid> fluids = List.of();
 
    public FluidHandler() {
       super("fluid", PrintModeType.FLUID, Configs.Core.FLUID, Configs.Fluid.FLUID_SELECTION_TYPE, true);
    }
 
+   // ── 供 FluidDrainBase / FluidInstantBreak（同包、非子类）访问：
+   //    父类 ClientPlayerTickHandler（不同包）的 level/player 是 protected，仅子类可见 ──
+   ClientLevel world() {
+      return this.level;
+   }
+
+   LocalPlayer player() {
+      return this.player;
+   }
+
    @Override
    protected int getTickInterval() {
-      return Configs.Print.PLACE_INTERVAL.getIntegerValue();
+      // 排流体自扫描每 tick 都跑：管线节奏（铺→等邻居→挖→重试）由自己的冷却与等待控制，
+      // 跟「打印间隔」解耦 —— 打印间隔调大不该拖慢排流体。
+      return 1;
    }
 
    @Override
@@ -129,12 +172,19 @@ public class FluidHandler extends ClientPlayerTickHandler {
       this.simpleFillItems = safe.isEmpty() ? new ArrayList<>(this.fillItems) : safe;
       diag("simpleFillItems=" + this.simpleFillItems.size() + " (回退=" + safe.isEmpty()
          + ") 清单=" + this.fillBlocks + " 简单模式="
-         + Configs.Fluid.FLUID_SIMPLE_MODE.getBooleanValue());
-      if (!Configs.Fluid.FLUID_SIMPLE_MODE.getBooleanValue()) {
+         + Configs.Fluid.FLUID_SIMPLE_MODE.getBooleanValue()
+         + " 秒破模式=" + Configs.Fluid.FLUID_INSTANT_BREAK_MODE.getBooleanValue());
+
+      boolean simpleMode = Configs.Fluid.FLUID_SIMPLE_MODE.getBooleanValue();
+      boolean instantMode = Configs.Fluid.FLUID_INSTANT_BREAK_MODE.getBooleanValue();
+
+      if (instantMode) {
+         // 秒破方块排流体（LPCTools liquidCleaner 移植）：全权接管，清理简单排流体的状态
          this.simplePlaced.clear();
          this.simplePending.clear();
          this.holdIterationThisTick = false;
-      } else {
+         FluidInstantBreak.tick(this);
+      } else if (simpleMode) {
          // 本 tick 是否已经开了破坏：开了就不再放新的方块（避免又把填充物换回手上、把挖掘进度打断）
          this.holdIterationThisTick = false;
          // 简单排流体：每 tick 单独扫一遍"已盖住 / 已入队"的格位。
@@ -144,22 +194,18 @@ public class FluidHandler extends ClientPlayerTickHandler {
          // 处理器迭代只把"空气格"交过来（实测日志 16/16 全是 EmptyFluid），水面永远轮不到，
          // 所以简单排流体必须自己扫水面。
          this.tickSimplePlacements();
+      } else {
+         // 两个功能按钮都关：排流体走基础逻辑（BiliXWhite replaceMode 语义，冻结区）
+         FluidDrainBase.tickScan(this);
       }
    }
 
-   /**
-    * 简单排流体：与迭代盒无关的清理扫描。
-    * <ul>
-    *   <li>已盖住且可以挖的（相邻水源也都盖住了，或等待超时）：在交互距离内就交给破坏队列，每 tick 只开一个；</li>
-    *   <li>已入队还没消失的：在交互距离内用较短间隔重试，出了距离按退避等玩家走回来。</li>
-    * </ul>
-    */
    /**
     * 简单排流体：自己扫玩家周围的水源并逐个盖住。
     * <p>
     * 为什么不能靠处理器的迭代：实测日志里 {@code executeIteration} 收到的全是空气格
     * （{@code fluid=EmptyFluid}），水面格根本不在迭代候选里，于是"只破坏不排水"。
-    * 这里每 tick 扫一个小方盒（3 层高、半径 8），只挑<b>水源</b>且属于配置流体列表的格子，
+    * 这里每 tick 扫一个小方盒（3 层高、半径 8），只挑<b>水源</b>且属于配置流体列表、且在交互距离内的格子，
     * 走的是同一条 {@link #executeSimpleRemoval} 流程（切物品 → 点击放置 → 记录已铺）。
     */
    private void tickSimplePlacements() {
@@ -170,7 +216,8 @@ public class FluidHandler extends ClientPlayerTickHandler {
       BlockPos origin = this.player.blockPosition();
       int range = 8;
 
-      for (int dy = -3; dy <= 1; dy++) {
+      // 层高高的先排、层高低的后排（与秒破方块排流体同一遍历方向）
+      for (int dy = 1; dy >= -3; dy--) {
          for (int dx = -range; dx <= range; dx++) {
             for (int dz = -range; dz <= range; dz++) {
                BlockPos pos = origin.offset(dx, dy, dz);
@@ -183,8 +230,18 @@ public class FluidHandler extends ClientPlayerTickHandler {
                   continue;
                }
 
+               // 够不着的先不铺：铺了也是白排一个动作、白占放置配额，反而拖慢够得着的那批。
+               if (!PlayerUtils.canInteracted(pos)) {
+                  continue;
+               }
+
+               // ★ 只在投影工作范围内排流体：自扫描不受迭代器约束，必须显式套用
+               //   与处理器迭代同一套选区判定，否则会跑到选区外把不相干的水也排掉。
+               if (!this.isWithinWorkRange(pos)) {
+                  continue;
+               }
+
                AtomicReference<Boolean> skip = new AtomicReference<>(false);
-               diag("fluid-diag3 自扫到水源 @" + pos.toShortString() + " 流体=" + state.getType());
                this.executeSimpleRemoval(pos, skip);
                if (Boolean.TRUE.equals(skip.get()) || this.holdIterationThisTick) {
                   return;
@@ -194,53 +251,97 @@ public class FluidHandler extends ClientPlayerTickHandler {
       }
    }
 
+   /**
+    * 简单排流体：与迭代盒无关的清理扫描。
+    * <ul>
+    *   <li>已盖住且可以挖的（相邻水源也都盖住了，或等待超时）：在交互距离内就交给破坏队列，每 tick 最多放出
+    *       {@link #removalsPerTick()} 个 —— 跟随「挖掘 → 每 tick 破坏方块数」配置；</li>
+    *   <li>已入队还没消失的：在距离内下一 tick 立刻重试，出了距离按 40~200 tick 退避等玩家走回来。</li>
+    * </ul>
+    */
    private void tickSimpleRemovals() {
-      diag("fluid-diag2 tickSimpleRemovals placed=" + this.simplePlaced.size()
-         + " pending=" + this.simplePending.size());
       if (this.level == null || this.player == null) {
          return;
       }
 
       long now = this.level.getGameTime();
+      int cap = removalsPerTick();
+      int released = 0;
 
+      // 层高高的先挖：把已盖住/待挖的格位按 Y 从高到低排序后再放出，
+      // 与"铺填充块自上而下"同一方向，视觉上是整片从上往下清。
       if (!this.simplePlaced.isEmpty()) {
-         Iterator<Map.Entry<Long, Long>> iterator = this.simplePlaced.entrySet().iterator();
+         List<Map.Entry<Long, Long>> entries = new ArrayList<>(this.simplePlaced.entrySet());
+         entries.sort((a, b) -> Integer.compare(BlockPos.of(b.getKey()).getY(), BlockPos.of(a.getKey()).getY()));
 
-         while (iterator.hasNext()) {
-            Map.Entry<Long, Long> entry = iterator.next();
-            BlockPos pos = BlockPos.of(entry.getKey());
-            long waited = now - entry.getValue();
-            if (waited >= 2L && (this.isLocallySafeToRemove(pos) || waited >= NEIGHBOUR_WAIT_TICKS)) {
+         for (Map.Entry<Long, Long> entry : entries) {
+            if (released >= cap) {
+               break;
+            }
+
+            Long key = entry.getKey();
+            Long placedAt = this.simplePlaced.get(key);
+            if (placedAt == null) {
+               continue;
+            }
+
+            BlockPos pos = BlockPos.of(key);
+            long waited = now - placedAt;
+            if (waited >= 1L && (this.isLocallySafeToRemove(pos) || waited >= NEIGHBOUR_WAIT_TICKS)) {
                if (!PlayerUtils.canInteracted(pos)) {
                   continue;
                }
 
-               iterator.remove();
+               // 破坏队列正在挖别的格：现在放出会切工具、清掉那一格的挖掘进度 —— 留在表里等下一 tick
+               if (BreakUtils.INSTANCE.hasActiveDestroyTarget() && !BreakUtils.INSTANCE.isDestroyingPos(pos)) {
+                  continue;
+               }
+
+               this.simplePlaced.remove(key);
                this.queueRemoval(pos, now, null);
-               break;
+               released++;
             }
          }
       }
 
-      if (!this.simplePending.isEmpty()) {
-         Iterator<Map.Entry<Long, PendingRemoval>> iterator = this.simplePending.entrySet().iterator();
+      if (!this.simplePending.isEmpty() && released < cap) {
+         List<Map.Entry<Long, PendingRemoval>> entries = new ArrayList<>(this.simplePending.entrySet());
+         entries.sort((a, b) -> Integer.compare(BlockPos.of(b.getKey()).getY(), BlockPos.of(a.getKey()).getY()));
 
-         while (iterator.hasNext()) {
-            Map.Entry<Long, PendingRemoval> entry = iterator.next();
-            BlockPos pos = BlockPos.of(entry.getKey());
+         for (Map.Entry<Long, PendingRemoval> entry : entries) {
+            if (released >= cap) {
+               break;
+            }
+
+            Long key = entry.getKey();
+            if (!this.simplePending.containsKey(key)) {
+               continue;
+            }
+
+            BlockPos pos = BlockPos.of(key);
             if (this.isCoverBlockGone(pos)) {
-               iterator.remove();
+               this.simplePending.remove(key);
                continue;
             }
 
             PendingRemoval pending = entry.getValue();
             boolean inRange = PlayerUtils.canInteracted(pos);
-            long interval = inRange ? 20L : Math.min(60L + 20L * pending.attempts, 200L);
+            // 破坏队列正在挖别的格：重试会切工具、清进度 —— 留在表里等下一 tick
+            if (inRange && BreakUtils.INSTANCE.hasActiveDestroyTarget() && !BreakUtils.INSTANCE.isDestroyingPos(pos)) {
+               continue;
+            }
+
+            // 在交互距离内就立刻重试（挖掘部分的节奏：能挖就挖，不干等）
+            long interval = inRange ? 1L : Math.min(40L + 20L * pending.attempts, 200L);
             if (now - pending.queuedAt >= interval) {
                this.queueRemoval(pos, now, pending);
-               break;
+               released++;
             }
          }
+      }
+
+      if (released > 0 && Configs.Core.DEBUG_OUTPUT.getBooleanValue()) {
+         diag("放出 " + released + " 格待挖；placed=" + this.simplePlaced.size() + " pending=" + this.simplePending.size());
       }
    }
 
@@ -251,12 +352,15 @@ public class FluidHandler extends ClientPlayerTickHandler {
 
    @Override
    protected void executeIteration(BlockPos blockPos, AtomicReference<Boolean> skipIteration) {
-      FluidState diagState = this.level.getBlockState(blockPos).getFluidState();
-      diag("fluid-diag2 executeIteration @" + blockPos.toShortString() + " fluid=" + diagState.getType()
-         + " source=" + diagState.isSource() + " empty=" + diagState.isEmpty()
-         + " simple=" + Configs.Fluid.FLUID_SIMPLE_MODE.getBooleanValue());
       if (this.holdIterationThisTick) {
          // 本 tick 已经交给破坏队列了：不能再放置/换物品，否则会把刚切好的工具换掉、挖掘进度清零
+         return;
+      }
+
+      boolean instantMode = Configs.Fluid.FLUID_INSTANT_BREAK_MODE.getBooleanValue();
+      if (instantMode) {
+         // 秒破方块排流体：全部工作由 preprocess 里的自扫描完成（LPCTools 语义），
+         // 迭代进来的格位不再处理，避免两条通路互相抢动作配额。
          return;
       }
 
@@ -279,21 +383,8 @@ public class FluidHandler extends ClientPlayerTickHandler {
          return;
       }
 
-      if (!Configs.Fluid.FILL_FLOWING_FLUID.getBooleanValue() && !fluidState.isSource()) {
-         return;
-      }
-
-      if (!InventoryUtils.switchToItems(this.player, this.fillItems.toArray(new Item[0]))) {
-         return;
-      }
-
-      Action action = new Action().setActionSource(ActionManager.ActionSource.FLUID).queueAction(blockPos, Direction.UP, false, this.player);
-      ActionManager.INSTANCE.setNeedWaitModifyLookFromAction(action.getNeedWaitModifyLook());
-      if (ActionManager.INSTANCE.sendQueue(this.player).isWaiting()) {
-         skipIteration.set(true);
-      } else {
-         this.setCooldown(blockPos, Fluids.WATER.getTickDelay(this.level) * 2);
-      }
+      // 基础逻辑（冻结区）：BiliXWhite replaceMode 语义的"切填充物 → 右键放置"
+      FluidDrainBase.tryPlace(this, blockPos, skipIteration);
    }
 
    /**
@@ -324,13 +415,13 @@ public class FluidHandler extends ClientPlayerTickHandler {
             return;
          }
 
-         long interval = Math.min(40L + 20L * pending.attempts, 200L);
+         long interval = Math.min(4L + 4L * pending.attempts, 40L);
          if (now - pending.queuedAt >= interval) {
             this.queueRemoval(blockPos, now, pending);
-            this.setCooldown(blockPos, 20);
+            this.setCooldown(blockPos, 2);
             skipIteration.set(true);
          } else {
-            this.setCooldown(blockPos, 5);
+            this.setCooldown(blockPos, 1);
          }
 
          return;
@@ -343,14 +434,14 @@ public class FluidHandler extends ClientPlayerTickHandler {
          // 「无限水」就是这么处理的——同一片水源全部盖住后才会开始挖。
          // 但等待有上限（NEIGHBOUR_WAIT_TICKS）：相邻水源在选区外/盖不住时也不能一直干等，
          // 超时就照挖，剩下的流动水在源头都没了之后会自己流干。
-         if (now - placedAt >= 2L && (this.isLocallySafeToRemove(blockPos) || now - placedAt >= NEIGHBOUR_WAIT_TICKS)) {
+         if (now - placedAt >= 1L && (this.isLocallySafeToRemove(blockPos) || now - placedAt >= NEIGHBOUR_WAIT_TICKS)) {
             this.simplePlaced.remove(key);
             this.queueRemoval(blockPos, now, null);
             // 本 tick 不再继续跑别的格位：避免又把填充物换回手上，把刚开始的挖掘打断
-            this.setCooldown(blockPos, 20);
+            this.setCooldown(blockPos, 1);
             skipIteration.set(true);
          } else {
-            this.setCooldown(blockPos, 2);
+            this.setCooldown(blockPos, 1);
          }
 
          return;
@@ -363,8 +454,24 @@ public class FluidHandler extends ClientPlayerTickHandler {
          return;
       }
 
+      // ★ 破坏进行中绝不切物品：服务端在手持物品变化的瞬间会把当前挖掘进度清零。
+      //   但如果主手上**已经是填充物**，铺块不会发任何切手包（switchToItems 幂等），
+      //   可以与挖掘并行 —— 以前一刀切的"破坏中不许铺"把流水线串行化了。
+      if (BreakUtils.INSTANCE.hasActiveDestroyTarget()
+         && !this.simpleFillItems.contains(this.player.getMainHandItem().getItem())) {
+         this.setCooldown(blockPos, 2);
+         return;
+      }
+
       if (!InventoryUtils.switchToItems(this.player, this.simpleFillItems.toArray(new Item[0]))) {
          diag("跳过：切物品失败（背包里没有：" + this.simpleFillItems + "）");
+         return;
+      }
+
+      // 够不着的格位不铺：放置包发出去也不会生效，只会白占动作配额
+      if (!PlayerUtils.canInteracted(blockPos)) {
+         diag("跳过：超出交互距离 @" + blockPos.toShortString());
+         this.setCooldown(blockPos, 10);
          return;
       }
 
@@ -379,18 +486,19 @@ public class FluidHandler extends ClientPlayerTickHandler {
       // 盖上以后先记下来：本 tick 不动它，等"整片盖完"再回来挖
       diag("已发出放置点击 @" + blockPos.toShortString() + " 物品=" + this.player.getMainHandItem());
       this.simplePlaced.put(key, now);
-      this.setCooldown(blockPos, 5);
+      this.setCooldown(blockPos, 1);
    }
 
    /**
-    * 把这一格交给破坏队列挖掉：先切到合适的工具（石头→镐子等），再入队并登记"待挖"。
-    * 显式切工具是为了不依赖破坏流程内部那条切换路径，保证"先拿镐子，再挖"。
+    * 把这一格交给破坏队列挖掉：先切到合适的工具（填充块是石头就切镐子），再入队并登记"待挖"。
+    * <p>
+    * 工具切换走 {@link BreakUtils#autoSwitchToolIfEnabled} —— 与主破坏流程同一处判定，
+    * 也就是「核心 → 自动工具切换」这一个开关同时管住"主页面挖掘"和"简单排流体"两条路，
+    * 不再各判各的、互相把对方换好的工具换掉。
     */
    private void queueRemoval(BlockPos blockPos, long now, PendingRemoval retry) {
       BlockState state = this.level.getBlockState(blockPos);
-      if (Configs.Core.AUTO_TOOL_SWITCH.getBooleanValue()) {
-         BreakUtils.trySwitchToEffectiveTool(blockPos, state);
-      }
+      BreakUtils.autoSwitchToolIfEnabled(blockPos, state);
 
       // 用"强制挖除"：排流体盖住的格位必然紧邻流体，走普通判定会被「不挖掘流体」保护拦下
       diag("交给破坏队列 @" + blockPos.toShortString() + " 状态=" + state.getBlock());
@@ -403,6 +511,21 @@ public class FluidHandler extends ClientPlayerTickHandler {
          retry.queuedAt = now;
          retry.attempts++;
       }
+   }
+
+   /** 手上现在拿的是不是我们用来盖水的填充物（是的话说明当前没在"拿工具挖东西"） */
+   private boolean isHoldingFillItem() {
+      if (this.player == null || this.simpleFillItems.isEmpty()) {
+         return false;
+      }
+
+      Item held = this.player.getMainHandItem().getItem();
+      if (this.simpleFillItems.contains(held)) {
+         return true;
+      }
+
+      // 兜底：拿副手在放的情况
+      return this.simpleFillItems.contains(this.player.getOffhandItem().getItem());
    }
 
    /** 这一格上我们放的填充块是否已经消失（变成空气、变成流体、或被换成别的方块都算完事） */

@@ -275,7 +275,7 @@ public abstract class MixinMultiPlayerGameMode implements MultiPlayerGameModeExt
    }
 
    @Unique
-   private boolean litematica_printer$instantMine(BlockPos blockPos, Direction direction) {
+   private boolean litematica_printer$instantMine(BlockPos blockPos, Direction direction, boolean allowToolSwitch) {
       if (Configs.Mine.BREAK_USE_PACKET.getBooleanValue() && Configs.Mine.BREAK_INSTANT_MINE.getBooleanValue()) {
          List<String> veilList = Configs.Mine.BREAK_INSTANT_MINE_LIST.getStrings();
          if (!veilList.isEmpty() && this.minecraft.level != null) {
@@ -283,6 +283,12 @@ public abstract class MixinMultiPlayerGameMode implements MultiPlayerGameModeExt
             if (veilList.stream().noneMatch(s -> PinYinSearchUtils.matchName(s, veilState))) {
                return false;
             }
+         }
+
+         // 「自动工具切换」必须在这里也切一次：秒破分支会直接返回 COMPLETED，走不到下面正常破坏流程里的
+         // 那次切换，于是开着秒破时"自动工具切换"对秒破的方块永远不生效（挖出来的方块种类/掉落就是错的）。
+         if (allowToolSwitch && this.minecraft.level != null) {
+            BreakUtils.trySwitchToEffectiveTool(blockPos, this.minecraft.level.getBlockState(blockPos));
          }
 
          if (this.isDestroying && !this.sameDestroyTarget(blockPos)) {
@@ -316,7 +322,7 @@ public abstract class MixinMultiPlayerGameMode implements MultiPlayerGameModeExt
          return BlockBreakResult.FAILED;
       } else if (Configs.Mine.BREAK_NON_BLOCKING.getBooleanValue() && BreakUtils.isPlayerMining()) {
          return BlockBreakResult.ABORTED;
-      } else if (this.litematica_printer$instantMine(blockPos, direction)) {
+      } else if (!BreakUtils.INSTANCE.isInstantMineSuppressed() && this.litematica_printer$instantMine(blockPos, direction, allowToolSwitch)) {
          return BlockBreakResult.COMPLETED;
       } else {
          BlockState blockState = level.getBlockState(blockPos);
@@ -401,7 +407,7 @@ public abstract class MixinMultiPlayerGameMode implements MultiPlayerGameModeExt
          return BlockBreakResult.FAILED;
       } else if (Configs.Mine.BREAK_NON_BLOCKING.getBooleanValue() && BreakUtils.isPlayerMining()) {
          return BlockBreakResult.ABORTED;
-      } else if (this.litematica_printer$instantMine(blockPos, direction)) {
+      } else if (!BreakUtils.INSTANCE.isInstantMineSuppressed() && this.litematica_printer$instantMine(blockPos, direction, allowToolSwitch)) {
          return BlockBreakResult.COMPLETED;
       } else {
          boolean localEffects = localPrediction || forceDelayedDestroy;

@@ -294,7 +294,6 @@ public abstract class ClientPlayerTickHandler extends ConfigUtils {
             int maxExecs = this.getMaxExecutions();
             int timeLimit = this.getIterationTimeLimit();
             boolean debugMode = Configs.Core.DEBUG_OUTPUT.getBooleanValue();
-            boolean needRangeCheck = this.needsRangeCheck();
             boolean isSchematic = this.isSchematicHandler();
             long startTime = timeLimit > 0 ? System.nanoTime() : 0L;
             long timeLimitNanos = (long)timeLimit * 1000000L;
@@ -350,14 +349,7 @@ public abstract class ClientPlayerTickHandler extends ConfigUtils {
                         }
 
                         if (!PlayerUtils.canInteracted(pos)
-                           || needRangeCheck
-                              && (
-                                 !(this.selectionType != null
-                                       && this.selectionType.getOptionListValue()
-                                          == me.aleksilassila.litematica.printer.enums.MineSelectionType.PLANE_UNBOUNDED)
-                                    && (isSchematic ? !LitematicaUtils.isSchematicBlock(pos) : !LitematicaUtils.isWithinSelection1ModeRange(pos))
-                                    || this.selectionType != null && !PlayerUtils.isPositionInSelectionRange(this.player, pos, this.selectionType)
-                              )
+                           || !this.isWithinWorkRange(pos)
                            || this.shouldSkipFromScan(pos)) {
                            continue;
                         }
@@ -590,6 +582,35 @@ public abstract class ClientPlayerTickHandler extends ConfigUtils {
 
    protected boolean needsRangeCheck() {
       return true;
+   }
+
+   /**
+    * 迭代器同款选区过滤：pos 是否在允许的工作范围内（与 {@code iterateBlocks} 的判定完全一致）。
+    * <p>
+    * 供排流体等"自己扫方盒"的处理器复用 —— 自扫描不受迭代器约束，必须显式套用同一套
+    * 选区判定，否则会出现"排流体跑到投影选区外干活"的问题。
+    * 语义：
+    * <ul>
+    *   <li>「平面无边界」选区类型（挖掘/排流体专用）不做 litematica 选区检查，只受 Y 层限制；</li>
+    *   <li>普通情况：必须在 litematica 选区内（原理图模式则要求是原理图方块）；</li>
+    *   <li>且必须满足处理器自己的选区类型（{@code FLUID_SELECTION_TYPE} 等）。</li>
+    * </ul>
+    */
+   public boolean isWithinWorkRange(BlockPos pos) {
+      if (!this.needsRangeCheck()) {
+         return true;
+      }
+
+      boolean isSchematic = this.isSchematicHandler();      boolean planeUnbounded = this.selectionType != null
+         && this.selectionType.getOptionListValue()
+            == me.aleksilassila.litematica.printer.enums.MineSelectionType.PLANE_UNBOUNDED;
+      if (!planeUnbounded
+         && (isSchematic ? !LitematicaUtils.isSchematicBlock(pos) : !LitematicaUtils.isWithinSelection1ModeRange(pos))) {
+         return false;
+      }
+
+      return this.selectionType == null
+         || PlayerUtils.isPositionInSelectionRange(this.player, pos, this.selectionType);
    }
 
    @Nullable

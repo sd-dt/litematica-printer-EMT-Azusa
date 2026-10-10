@@ -134,7 +134,20 @@ public class MineHandler extends ClientPlayerTickHandler {
             }
          }
       } else {
+         // ★ 与排流体的破坏队列互斥：队列正在挖别的格位时这边先等一拍。
+         //   两边同时挥镐（目标不同）会让客户端不断 STOP→START，挖掘进度反复清零，
+         //   表现就是"每个方块只挖一半就换下一个"，来回横跳直到卡死。
+         if (BreakUtils.INSTANCE.hasActiveDestroyTarget() && !BreakUtils.INSTANCE.isDestroyingPos(blockPos)) {
+            skipIteration.set(true);
+            return;
+         }
+
          BlockBreakResult result = BreakUtils.INSTANCE.continueDestroyBlock(blockPos);
+         if (result == BlockBreakResult.IN_PROGRESS) {
+            // 本格还在挖：滚动锁住排流体的破坏队列，防止它中途插队换目标
+            BreakUtils.INSTANCE.suppressQueuedBreaks(2);
+         }
+
          if (result == BlockBreakResult.IN_PROGRESS || result == BlockBreakResult.COMPLETED_WAIT) {
             skipIteration.set(true);
          }
@@ -161,8 +174,21 @@ public class MineHandler extends ClientPlayerTickHandler {
          if (!this.canContinueActiveMineTarget(pos)) {
             this.activeMinePos = null;
          } else {
-            BlockBreakResult result = BreakUtils.INSTANCE.continueDestroyBlockForMine(pos, Direction.DOWN, true);
-            if (result == BlockBreakResult.IN_PROGRESS || result == BlockBreakResult.COMPLETED || result == BlockBreakResult.COMPLETED_WAIT) {
+            // 正在挖的这一格不再请求切换工具：换手会立刻清零挖掘进度，
+            // 表现就是"换完工具卡一下才挖得动"、甚至看着像"工具有时候不切换"。
+            // 这一格该用什么工具，在"会话"开始时（executeToolSession）已经判定过了。
+            // ★ 与排流体的破坏队列互斥：队列正在挖别的格位时先按住不动（保持会话，不换目标），
+            //   否则两边交替挥镐会把彼此的挖掘进度反复清零，"只挖一半就换"。
+            if (BreakUtils.INSTANCE.hasActiveDestroyTarget() && !BreakUtils.INSTANCE.isDestroyingPos(pos)) {
+               return;
+            }
+
+            BlockBreakResult result = BreakUtils.INSTANCE.continueDestroyBlockForMine(pos, Direction.DOWN, false);
+            if (result == BlockBreakResult.IN_PROGRESS) {
+               // 本格还在挖：滚动锁住排流体的破坏队列
+               BreakUtils.INSTANCE.suppressQueuedBreaks(2);
+               this.toolSession.consumeAction();
+            } else if (result == BlockBreakResult.COMPLETED || result == BlockBreakResult.COMPLETED_WAIT) {
                this.toolSession.consumeAction();
             }
 
@@ -227,8 +253,15 @@ public class MineHandler extends ClientPlayerTickHandler {
    }
 
    private BlockBreakResult executeMineTarget(MineBreakExecutor.Target target, boolean allowToolSwitch) {
+      // ★ 与排流体的破坏队列互斥：队列正在挖别的格位时这边只等待，不挥镐不换目标
+      if (BreakUtils.INSTANCE.hasActiveDestroyTarget() && !BreakUtils.INSTANCE.isDestroyingPos(target.pos())) {
+         return BlockBreakResult.ABORTED;
+      }
+
       BlockBreakResult result = BreakUtils.INSTANCE.continueDestroyBlockForMine(target.pos(), Direction.DOWN, allowToolSwitch);
       if (result == BlockBreakResult.IN_PROGRESS) {
+         // 本格还在挖：滚动锁住排流体的破坏队列
+         BreakUtils.INSTANCE.suppressQueuedBreaks(2);
          this.activeMinePos = target.pos();
       }
 

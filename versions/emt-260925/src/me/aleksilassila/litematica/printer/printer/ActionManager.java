@@ -207,6 +207,24 @@ public class ActionManager {
                         Vec3 sideOffset = Vec3.atLowerCornerOf(BlockUtils.getVector(click.side)).scale(0.5);
                         Vec3 rotatedHitModifier = click.hitModifier.yRot((direction.toYRot() + 90.0F) % 360.0F).scale(0.5);
                         hitVec = targetCenter.add(sideOffset).add(rotatedHitModifier);
+
+                        // ★ 支撑方块不是完整方块（台阶/楼梯/栅栏/地毯/雪层…）时，
+                        //   "方块中心+面×0.5"造出来的命中点经常悬在轮廓形状之外或正好压在棱上 ——
+                        //   原版客户端的点击命中点永远在形状表面上，按偏移点处理会造成
+                        //   概率性放置失败（骑乘坐骑打印非完整方块旁边时尤其明显）。
+                        //   这里把命中点投影回支撑方块的轮廓形状上，与真人点击行为对齐。
+                        if (Reference.MINECRAFT.level != null && player.getVehicle() != null) {
+                           net.minecraft.world.level.block.state.BlockState supportState =
+                              Reference.MINECRAFT.level.getBlockState(click.target);
+                           if (!supportState.isCollisionShapeFullBlock(Reference.MINECRAFT.level, click.target)) {
+                              hitVec = BlockUtils.projectHitPointOntoShape(
+                                 supportState.getShape(Reference.MINECRAFT.level, click.target),
+                                 click.target,
+                                 hitVec,
+                                 player.getEyePosition()
+                              );
+                           }
+                        }
                      } else {
                         hitVec = click.hitModifier;
                      }

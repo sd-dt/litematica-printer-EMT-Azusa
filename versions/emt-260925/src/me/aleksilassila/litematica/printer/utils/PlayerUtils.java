@@ -149,9 +149,15 @@ public class PlayerUtils {
 
    public static boolean canInteracted(BlockPos blockPos) {
       double workRange = (double)ConfigUtils.getWorkRange();
+      // ★ 骑乘坐骑时服务端按"服务端推算的坐骑位置"做交互距离校验，而坐骑在移动/晃动，
+      //   服务端位置滞后于客户端 —— 边缘格位客户端判定够得着、服务端判定超范围，
+      //   放置/破坏包被静默丢弃（无任何日志），表现就是"骑在坐骑上打印有概率打不出来"。
+      //   所以骑乘时把附加余量从 1.0 收到 0.5：边缘格先不打，等骑稳了/靠近了再打。
+      LocalPlayer rangePlayer = ConfigUtils.client.player;
+      double extraRange = rangePlayer != null && rangePlayer.isPassenger() ? 0.5 : 1.0;
       if (Configs.Core.CHECK_PLAYER_INTERACTION_RANGE.getBooleanValue()
-         && ConfigUtils.client.player != null
-         && !isWithinBlockInteractionRange(ConfigUtils.client.player, blockPos, 1.0)) {
+         && rangePlayer != null
+         && !isWithinBlockInteractionRange(rangePlayer, blockPos, extraRange)) {
          return false;
       } else if (Configs.Core.ITERATOR_SHAPE.getOptionListValue() instanceof RadiusShapeType radiusShapeType) {
          return switch (radiusShapeType) {

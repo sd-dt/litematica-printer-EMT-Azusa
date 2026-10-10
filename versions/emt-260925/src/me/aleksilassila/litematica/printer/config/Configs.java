@@ -300,7 +300,9 @@ public static final ConfigBoolean AUTO_PACKET_LIMIT = ConfigBuilders.bool("autoP
       public static final ConfigStringList FLUID_REPLACE_BLOCK_LIST = ConfigBuilders.stringList("fluidReplaceBlockList").defaultValue(Blocks.COBBLESTONE).build();
       public static final ConfigStringList FLUID_LIST = ConfigBuilders.stringList("fluidList").defaultValue(Blocks.WATER, Blocks.LAVA).build();
       public static final ConfigBoolean FLUID_SIMPLE_MODE = ConfigBuilders.bool("fluidSimpleMode").defaultValue(false).build();
-      public static final ImmutableList<IConfigBase> OPTIONS = ImmutableList.of(FLUID_SELECTION_TYPE, FLUID_SIMPLE_MODE, FILL_FLOWING_FLUID, FLUID_REPLACE_BLOCK_LIST, FLUID_LIST);
+      /** 秒破方块排流体（LPCTools liquidCleaner 移植）：与更好的排流体互斥时优先生效 */
+      public static final ConfigBoolean FLUID_INSTANT_BREAK_MODE = ConfigBuilders.bool("fluidInstantBreakMode").defaultValue(false).build();
+      public static final ImmutableList<IConfigBase> OPTIONS = ImmutableList.of(FLUID_SELECTION_TYPE, FLUID_SIMPLE_MODE, FLUID_INSTANT_BREAK_MODE, FILL_FLOWING_FLUID, FLUID_REPLACE_BLOCK_LIST, FLUID_LIST);
    }
 
    public static class Go {

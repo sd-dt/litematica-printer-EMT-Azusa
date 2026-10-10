@@ -47,7 +47,13 @@ public class BreakUtils {
    public static final Minecraft client = Minecraft.getInstance();
    public static final BreakUtils INSTANCE = new BreakUtils();
    private final Queue<BlockPos> breakQueue = new LinkedList<>();
+   /**
+    * 「强制挖除」的格位：由处理器自己认定为"必须挖掉"的方块（例如简单排流体盖住水源后留下的填充块）。
+    * 这类格位跳过「不挖掘流体 / 不破坏支撑方块」的保护；秒破只在"手上工具不对"时才压制。
+    */
    private final Set<Long> forcedBreaks = new HashSet<>();
+   /** 强制挖除进行中且手上工具不对：抑制秒破（秒破会跳过工具判定，拿错工具敲掉就不掉落了） */
+   private boolean instantMineSuppressed;
    private final Set<BlockPos> queuedBreaks = new HashSet<>();
    private final Map<BlockPos, Integer> recentlyBroken = new HashMap<>();
    private final Map<BlockPos, Integer> pendingBroken = new HashMap<>();
@@ -193,6 +199,18 @@ public class BreakUtils {
       return PinYinSearchUtils.matchBlockName(parsed.blockMatcher(), state) && parsed.matchesState(state);
    }
 
+   /**
+    * 「自动工具切换」的统一入口 —— 主破坏流程与简单排流体共用这一处判定。
+    * <p>
+    * 只有（核心 → 自动工具切换）开着才动手：开关关掉时谁都不许换手；开着时走同一套
+    * {@link InventoryUtils#switchToBestTool} / {@link #protectCurrentToolBeforeBreak(BlockState)}。
+    * 以前简单排流体是在自己那边单独判这个开关，两条路各切各的，容易出现
+    * "排流体把工具换好了、主流程又把填充物换回手上" 的互相打断。
+    */
+   public static boolean autoSwitchToolIfEnabled(@Nullable BlockPos pos, @Nullable BlockState blockState) {
+      return !Configs.Core.AUTO_TOOL_SWITCH.getBooleanValue() ? false : trySwitchToEffectiveTool(pos, blockState);
+   }
+
    public static boolean trySwitchToEffectiveTool(BlockPos pos, BlockState blockState) {
       if (pos != null && blockState != null && !blockState.isAir() && !(blockState.getBlock() instanceof LiquidBlock)) {
          LocalPlayer player = client.player;
@@ -236,7 +254,8 @@ public class BreakUtils {
    public static boolean isRecoveryToolReadyForBreak(BlockState blockState) {
       LocalPlayer player = client.player;
       if (player != null && !player.getAbilities().instabuild && ToolSelectionUtils.prefersSilkTouchForDrops(blockState)) {
-         boolean toolSwitchEnabled = ModUtils.isTweakerooLoaded() && ModUtils.isToolSwitchEnabled();
+         boolean toolSwitchEnabled = Configs.Core.AUTO_TOOL_SWITCH.getBooleanValue()
+            || ModUtils.isTweakerooLoaded() && ModUtils.isToolSwitchEnabled();
          if (!toolSwitchEnabled) {
             return true;
          } else {
@@ -280,16 +299,65 @@ public class BreakUtils {
     * 强制挖除：由调用方保证"这一格确实该挖"（例如简单排流体自己盖上去的填充块）。
     * <p>
     * 与 {@link #add(BlockPos)} 的区别：破坏判定会跳过「不挖掘流体」「不破坏支撑方块」这两项保护，
-    * 并且该格位不会被秒破接管 —— 这样"自动工具切换"才真的有机会把镐子换到手上把它挖掉。
+    * 并且手上工具不对时不会被秒破接管 —— 秒破分支会跳过"先换工具再挖"，拿错工具敲掉就不掉落了。
     * 「不挖掘流体」默认配置下无所谓，但很多人在挖掘分类里是开着的，而排流体盖住水源的格子
     * <b>必然</b>紧邻流体，不豁免的话这些填充块永远挖不掉。
     */
-      public void addForced(BlockPos pos) {
+   public void addForced(BlockPos pos) {
       if (pos != null) {
          BlockPos queuedPos = pos.immutable();
          this.forcedBreaks.add(queuedPos.asLong());
          this.add(queuedPos);
       }
+   }
+
+   /** 当前这一格是否跳过秒破（供 mixin 判断） */
+   public boolean isInstantMineSuppressed() {
+      return this.instantMineSuppressed;
+   }
+
+   /**
+    * 强制挖除的格位要不要压制秒破。
+    * <p>
+    * 压制只为一件事：秒破分支拿的是"手上现成的东西"，手上一把不对的工具（甚至空手）会把方块敲掉却<b>不掉落</b>。
+    * 所以手上工具正确（{@code isCorrectToolForDrops}，例如排流体在入队前已经显式切好的镐子）时就不压制 ——
+    * 秒破照走，排流体一格一格慢慢敲的瓶颈就没了；工具不对时才压制，让正常破坏流程有机会去把工具换过来。
+    */
+   private static boolean shouldSuppressInstantMineFor(BlockState state) {
+      LocalPlayer player = client.player;
+      if (player == null || state == null) {
+         return false;
+      } else if (player.getAbilities().instabuild) {
+         return false;
+      } else {
+         ItemStack stack = player.getMainHandItem();
+         return stack.isEmpty() || !stack.isCorrectToolForDrops(state);
+      }
+   }
+
+   /** 排队中的格位是否允许挖：强制挖除的跳过流体/支撑保护 */
+   private boolean canBreakQueued(BlockPos pos) {
+      return pos != null && this.forcedBreaks.contains(pos.asLong()) ? canBreakForced(pos) : canBreakBlock(pos);
+   }
+
+   /**
+    * 强制挖除用的判定：只保证"不是空气 / 不是流体 / 没被保护区禁止"，
+    * 不看「不挖掘流体」「不破坏支撑方块」这两项 —— 因为排流体盖住水源的填充块必然紧邻流体。
+    */
+   private static boolean canBreakForced(BlockPos pos) {
+      ClientLevel world = LitematicaUtils.client.level;
+      LocalPlayer player = LitematicaUtils.client.player;
+      if (world == null || player == null || LitematicaUtils.client.gameMode == null) {
+         return false;
+      }
+
+      BlockState state = world.getBlockState(pos);
+      return !state.isAir()
+         && !state.is(Blocks.AIR)
+         && !state.is(Blocks.CAVE_AIR)
+         && !state.is(Blocks.VOID_AIR)
+         && !(state.getBlock() instanceof LiquidBlock)
+         && !player.blockActionRestricted(world, pos, LitematicaUtils.client.gameMode.getPlayerMode());
    }
 
    public void add(BlockPos pos) {
@@ -405,8 +473,19 @@ public class BreakUtils {
                      while (!this.breakQueue.isEmpty()) {
                         BlockPos pos = this.breakQueue.poll();
                         this.queuedBreaks.remove(pos);
-                        if (pos != null && PlayerUtils.canInteracted(pos) && canBreakBlock(pos) && breakRestriction(level, pos, level.getBlockState(pos))) {
+                        if (pos != null
+                           && PlayerUtils.canInteracted(pos)
+                           && this.canBreakQueued(pos)
+                           && breakRestriction(level, pos, level.getBlockState(pos))) {
+                           // 强制挖除的格位不走秒破：秒破分支直接返回 COMPLETED，用不上工具，
+                           // 会把"先换镐子再挖"这条链路整段跳过。
+                           this.instantMineSuppressed = this.forcedBreaks.contains(pos.asLong());
                            BlockBreakResult result = this.continueDestroyBlock(pos, Direction.DOWN);
+                           this.instantMineSuppressed = false;
+                           if (result != BlockBreakResult.FAILED) {
+                              this.forcedBreaks.remove(pos.asLong());
+                           }
+
                            if (result == BlockBreakResult.IN_PROGRESS) {
                               this.breakPos = pos;
                               break;
@@ -421,14 +500,18 @@ public class BreakUtils {
                         }
                      }
                   } else {
-                     if (!canBreakBlock(this.breakPos)) {
+                     if (!this.canBreakQueued(this.breakPos)) {
+                        this.forcedBreaks.remove(this.breakPos.asLong());
                         this.breakPos = null;
                         this.forceDelayedDestroy = false;
                         this.onTick();
                         return;
                      }
 
+                     this.instantMineSuppressed = this.forcedBreaks.contains(this.breakPos.asLong())
+                        && shouldSuppressInstantMineFor(level.getBlockState(this.breakPos));
                      BlockBreakResult resultx = this.continueDestroyBlock(this.breakPos, Direction.DOWN);
+                     this.instantMineSuppressed = false;
                      if (resultx != BlockBreakResult.IN_PROGRESS) {
                         if (resultx == BlockBreakResult.COMPLETED || resultx == BlockBreakResult.COMPLETED_WAIT) {
                            this.markRecentlyBroken(this.breakPos);
@@ -437,6 +520,7 @@ public class BreakUtils {
                            }
                         }
 
+                        this.forcedBreaks.remove(this.breakPos.asLong());
                         this.breakPos = null;
                         this.forceDelayedDestroy = false;
                         this.onTick();
@@ -450,6 +534,11 @@ public class BreakUtils {
 
    public boolean hasActiveDestroyTarget() {
       return this.breakPos != null;
+   }
+
+   /** 破坏队列当前正在挖的格位是不是 pos（供挖掘/排流体两边互斥仲裁用） */
+   public boolean isDestroyingPos(@Nullable BlockPos pos) {
+      return pos != null && pos.equals(this.breakPos);
    }
 
    public void suppressQueuedBreaks(int ticks) {
