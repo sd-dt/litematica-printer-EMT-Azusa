@@ -495,6 +495,7 @@ public static final ConfigBoolean AUTO_PACKET_LIMIT = ConfigBuilders.bool("autoP
          .build();
       public static final ConfigBoolean BREAK_AVOID_SUPPORT = ConfigBuilders.bool("breakAvoidSupport").defaultValue(false).build();
       public static final ConfigBoolean BREAK_NON_BLOCKING = ConfigBuilders.bool("breakNonBlocking").defaultValue(false).build();
+      public static final ConfigBoolean ARCHAEOLOGY_MODE = ConfigBuilders.bool("archaeologyMode").defaultValue(false).build();
       public static final ConfigOptionList BREAK_LIMITER = ConfigBuilders.optionList("breakLimiter").defaultValue(ExcavateListMode.CUSTOM).build();
       public static final ConfigOptionList BREAK_LIMIT = ConfigBuilders.optionList("breakLimit")
          .defaultValue(ListType.NONE)
@@ -521,6 +522,7 @@ public static final ConfigBoolean AUTO_PACKET_LIMIT = ConfigBuilders.bool("autoP
          BREAK_FLUID_STRATEGY,
          BREAK_AVOID_SUPPORT,
          BREAK_NON_BLOCKING,
+         ARCHAEOLOGY_MODE,
          BREAK_PARALLEL,
          BREAK_USE_DELAYED_DESTROY,
          BREAK_INTERVAL,

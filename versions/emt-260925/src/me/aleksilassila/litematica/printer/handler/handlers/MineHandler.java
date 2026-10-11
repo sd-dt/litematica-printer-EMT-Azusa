@@ -21,6 +21,7 @@ import me.aleksilassila.litematica.printer.utils.PlayerUtils;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import org.jetbrains.annotations.Nullable;
 
@@ -113,14 +114,47 @@ public class MineHandler extends ClientPlayerTickHandler {
       }
    }
 
+   private static boolean isSuspiciousBlock(BlockState state) {
+      return state.is(Blocks.SUSPICIOUS_SAND) || state.is(Blocks.SUSPICIOUS_GRAVEL);
+   }
+
+   /**
+    * 考古模式保护判定（{@link Configs.Mine#ARCHAEOLOGY_MODE} 开启时生效）：
+    * 可疑沙子/可疑砂砾本身，以及它们正下方的整列方块一律不挖，其余无关方块照常破坏。
+    * 判定方式：本格是可疑方块 → 保护；否则沿本格向上扫到建筑上限，
+    * 该列任何一处出现可疑方块 → 本格视为「其下方的方块」而保护。
+    * 仅在考古模式开启时才会逐格向上扫，默认关闭零开销。
+    */
+   private boolean isArchaeologyProtected(BlockPos pos, BlockState state) {
+      if (!Configs.Mine.ARCHAEOLOGY_MODE.getBooleanValue()) {
+         return false;
+      } else if (isSuspiciousBlock(state)) {
+         return true;
+      } else {
+         int top = this.level.getMaxY();
+         BlockPos.MutableBlockPos cursor = pos.mutable();
+         while (cursor.getY() < top) {
+            cursor.move(Direction.UP);
+            if (isSuspiciousBlock(this.level.getBlockState(cursor))) {
+               return true;
+            }
+         }
+
+         return false;
+      }
+   }
+
    @Override
    public boolean canProcessPos(BlockPos pos) {
       if (Configs.Mine.BREAK_NON_BLOCKING.getBooleanValue() && BreakUtils.isPlayerMining()) {
          return false;
+      } else if (this.isOnCooldown(pos) || BlockPosCooldownManager.INSTANCE.isOnCooldown(this.level, "fluid", pos)) {
+         return false;
       } else {
-         return !this.isOnCooldown(pos) && !BlockPosCooldownManager.INSTANCE.isOnCooldown(this.level, "fluid", pos)
-            ? BreakUtils.canBreakBlock(pos) && mineRestriction(pos, this.level.getBlockState(pos))
-            : false;
+         BlockState state = this.level.getBlockState(pos);
+         return BreakUtils.canBreakBlock(pos)
+            && mineRestriction(pos, state)
+            && !this.isArchaeologyProtected(pos, state);
       }
    }
 
@@ -202,7 +236,12 @@ public class MineHandler extends ClientPlayerTickHandler {
    }
 
    private boolean canContinueActiveMineTarget(BlockPos pos) {
-      return pos != null && PlayerUtils.canInteracted(pos) && BreakUtils.canBreakBlock(pos) && mineRestriction(pos, this.level.getBlockState(pos));
+      if (pos == null || !PlayerUtils.canInteracted(pos) || !BreakUtils.canBreakBlock(pos)) {
+         return false;
+      } else {
+         BlockState state = this.level.getBlockState(pos);
+         return mineRestriction(pos, state) && !this.isArchaeologyProtected(pos, state);
+      }
    }
 
    private void executeToolSession(MineBreakExecutor.Target firstTarget, double nearestDistance) {
