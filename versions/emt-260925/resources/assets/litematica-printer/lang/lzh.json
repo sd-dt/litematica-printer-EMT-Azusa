@@ -367,6 +367,8 @@
   "litematica_printer.config.breakAvoidSupport.desc": "啟則不破重力石（沙、礫、紅沙、凝土粉、鐵砧、龍卵等）正下一格之石，以防抽支而墜。惟及常破。",
   "litematica_printer.config.breakNonBlocking": "協同掘石",
   "litematica_printer.config.breakNonBlocking.desc": "啟則，玩家手挖（按左鍵）時，印機暫止而讓出破態，勿使相搶同石之進度；玩家止即自動復之。惟生存、冒險用之，創造如故。",
+  "litematica_printer.config.archaeologyMode": "考古之法",
+  "litematica_printer.config.archaeologyMode.desc": "啟則，可疑之沙礫、暨其下諸石，皆不掘；餘石如常盡去。蓋護遺跡可疑之物，免誤刷也。",
   "litematica_printer.config.breakUseDelayedDestroy": "通用迟毁",
   "litematica_printer.config.printReserveItems": "留存繕材",
   "litematica_printer.config.printReserveItemCount": "繕材留數",

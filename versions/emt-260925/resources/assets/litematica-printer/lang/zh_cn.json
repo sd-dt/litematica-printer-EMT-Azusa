@@ -367,6 +367,8 @@
   "litematica_printer.config.breakAvoidSupport.desc": "启用后，不破坏重力方块（沙子、沙砾、红沙、混凝土粉末、铁砧、龙蛋等）正下方的一格方块，防止挖掉支撑引发重力方块坠落。仅影响普通挖掘。",
   "litematica_printer.config.breakNonBlocking": "协同挖掘",
   "litematica_printer.config.breakNonBlocking.desc": "启用后，玩家手动挖掘（按住左键）时，打印机暂停自己的挖掘并让出破坏状态，避免玩家与打印机互相抢占同一目标的进度；玩家停止挖掘后打印机自动恢复。仅于生存/冒险生效，创造不受影响。",
+  "litematica_printer.config.archaeologyMode": "考古模式",
+  "litematica_printer.config.archaeologyMode.desc": "启用后，挖掘功能不再破坏可疑沙子/可疑砂砾，也不破坏它们正下方的方块（整列保护），其余无关方块照常全部挖掉。适用于整理含可疑方块的建筑/遗迹投影，避免误刷可疑方块。",
   "litematica_printer.config.breakUseDelayedDestroy": "通用延迟破坏",
   "litematica_printer.config.printReserveItems": "保留打印耗材",
   "litematica_printer.config.printReserveItemCount": "打印耗材保留数量",
