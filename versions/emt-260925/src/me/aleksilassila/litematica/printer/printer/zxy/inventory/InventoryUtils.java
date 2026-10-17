@@ -103,7 +103,15 @@ public class InventoryUtils {
 
    public static boolean shouldSuppressContainerScreen() {
       LocalPlayer player = client.player;
-      return automatedQuickShulkerScreenProtection && player != null && !player.containerMenu.equals(player.inventoryMenu) && isOpenHandler;
+      if (!automatedQuickShulkerScreenProtection || player == null || !isOpenHandler) {
+         return false;
+      }
+
+      // ★ 不能只靠 containerMenu 判断：打开容器的数据包到达时，菜单对象可能比屏幕晚一拍才挂到
+      //   player 上，单看 containerMenu 会"有概率"漏判 —— 快捷潜影盒的容器界面真的弹出来，
+      //   画面里就飘着「潜影盒」标题（用户反馈的"三个字飘在半空中"）。
+      //   保护窗口（beginAutomatedQuickShulkerScreenProtection 后 40 tick）内一律按自动开盒处理。
+      return automatedQuickShulkerScreenProtectionTimeout > 0 || !player.containerMenu.equals(player.inventoryMenu);
    }
 
    public static void beginAutomatedQuickShulkerScreenProtection() {

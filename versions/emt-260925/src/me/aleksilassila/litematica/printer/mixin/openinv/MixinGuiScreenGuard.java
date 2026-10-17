@@ -21,7 +21,12 @@ public abstract class MixinGuiScreenGuard {
       cancellable = true
    )
    public void setScreen(@Nullable Screen screen, CallbackInfo ci) {
-      if (InventoryUtils.shouldPreserveAutomatedQuickShulkerScreenOnClose(screen)) {
+      // ★ 26.2 起容器界面（含快捷潜影盒打开的潜影盒界面）会经 Gui.setScreen 设置，
+      //   只拦 Minecraft.setScreenAndShow 不够 —— 漏网时界面真的弹出，画面里飘着「潜影盒」标题。
+      //   这里同样拦一次，且 shouldSuppressContainerScreen 已改成保护窗口判定（不再受菜单挂载时机影响）。
+      if (screen instanceof AbstractContainerScreen && InventoryUtils.shouldSuppressContainerScreen()) {
+         ci.cancel();
+      } else if (InventoryUtils.shouldPreserveAutomatedQuickShulkerScreenOnClose(screen)) {
          ci.cancel();
       } else {
          if (ModUtils.closeScreen > 0 && screen instanceof AbstractContainerScreen) {
