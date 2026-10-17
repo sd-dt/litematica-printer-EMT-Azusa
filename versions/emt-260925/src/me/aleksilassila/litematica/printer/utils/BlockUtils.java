@@ -28,8 +28,6 @@ import net.minecraft.world.level.block.state.properties.EnumProperty;
 import net.minecraft.world.level.block.state.properties.Property;
 import net.minecraft.world.level.block.state.properties.SlabType;
 import net.minecraft.world.level.block.state.properties.WallSide;
-import net.minecraft.world.phys.AABB;
-import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.Shapes;
 import net.minecraft.world.phys.shapes.VoxelShape;
@@ -301,25 +299,6 @@ public class BlockUtils {
     *
     * @return 投影后的命中点；形状为空时原样返回
     */
-   public static Vec3 projectHitPointOntoShape(VoxelShape shape, BlockPos pos, Vec3 point, Vec3 eye) {
-      if (shape.isEmpty()) {
-         return point;
-      }
-
-      BlockHitResult clipHit = shape.clip(eye, point, pos);
-      if (clipHit.getType() == net.minecraft.world.phys.HitResult.Type.BLOCK) {
-         return clipHit.getLocation();
-      }
-
-      AABB box = shape.bounds().move(pos);
-      double inset = 1.0 / 64.0;
-      return new Vec3(
-         Math.min(Math.max(point.x, box.minX + inset), box.maxX - inset),
-         Math.min(Math.max(point.y, box.minY + inset), box.maxY - inset),
-         Math.min(Math.max(point.z, box.minZ + inset), box.maxZ - inset)
-      );
-   }
-
    public static Map<Direction, Vec3> getSlabSides(Level world, BlockPos pos, SlabType requiredHalf) {
       if (requiredHalf == SlabType.DOUBLE) {
          requiredHalf = SlabType.BOTTOM;

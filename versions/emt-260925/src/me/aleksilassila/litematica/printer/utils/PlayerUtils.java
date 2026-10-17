@@ -149,12 +149,12 @@ public class PlayerUtils {
 
    public static boolean canInteracted(BlockPos blockPos) {
       double workRange = (double)ConfigUtils.getWorkRange();
-      // ★ 骑乘坐骑时服务端按"服务端推算的坐骑位置"做交互距离校验，而坐骑在移动/晃动，
-      //   服务端位置滞后于客户端 —— 边缘格位客户端判定够得着、服务端判定超范围，
-      //   放置/破坏包被静默丢弃（无任何日志），表现就是"骑在坐骑上打印有概率打不出来"。
-      //   所以骑乘时把附加余量从 1.0 收到 0.5：边缘格先不打，等骑稳了/靠近了再打。
+      // ★ 附加余量恒为 1.0（与原版 EMT / 26.2 线一致）。
+      //   2026-10-10 曾把骑乘时的余量收到 0.5，导致 (reach+0.5, reach+1.0] 这一段的方块
+      //   客户端直接跳过不打，而服务端其实接受到 reach+1.0 —— 表现就是"骑乘时有些方块
+      //   EMT 打得出来、这边永远不出手"（用户实测，dt261011c 回退）。
       LocalPlayer rangePlayer = ConfigUtils.client.player;
-      double extraRange = rangePlayer != null && rangePlayer.isPassenger() ? 0.5 : 1.0;
+      double extraRange = 1.0;
       if (Configs.Core.CHECK_PLAYER_INTERACTION_RANGE.getBooleanValue()
          && rangePlayer != null
          && !isWithinBlockInteractionRange(rangePlayer, blockPos, extraRange)) {
