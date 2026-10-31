@@ -8,9 +8,10 @@ import lombok.Generated;
 import me.aleksilassila.litematica.printer.Reference;
 import me.aleksilassila.litematica.printer.config.Configs;
 import me.aleksilassila.litematica.printer.mixin_extension.MultiPlayerGameModeExtension;
+import me.aleksilassila.litematica.printer.printer.action.Action;
+import me.aleksilassila.litematica.printer.printer.action.ClickAction;
 import me.aleksilassila.litematica.printer.utils.BlockUtils;
 import me.aleksilassila.litematica.printer.utils.InventoryUtils;
-import me.aleksilassila.litematica.printer.utils.PacketRateLimiter;
 import me.aleksilassila.litematica.printer.utils.PacketUtils;
 import me.aleksilassila.litematica.printer.utils.PlayerUtils;
 import net.minecraft.world.entity.player.Input;
@@ -27,7 +28,10 @@ import net.minecraft.network.protocol.game.ServerboundPlayerInputPacket;
 import net.minecraft.util.Mth;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.multiplayer.ClientPacketListener;
+import net.minecraft.client.multiplayer.PlayerInfo;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.world.level.block.SlabBlock;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -66,6 +70,9 @@ public class ActionManager {
    private final Map<Item, Integer> reservePendingConsumed = new HashMap<>();
    private final Map<Item, Integer> reserveLastSeenCount = new HashMap<>();
    private final Map<Item, Long> reservePendingLastMoveTick = new HashMap<>();
+   /** 本次交互前手里物品的快照：消耗归属要用它，不能用交互后读到的（最后一份用完会变成空气） */
+   @Nullable
+   private Item reservedItem;
    /** 未确认的"空中放置"点击：pos -> 点击时客户端看到的状态 + 点击时刻 */
    private final Map<Long, ActionManager.UnconfirmedInAirClick> unconfirmedInAirClicks = new HashMap<>();
 
@@ -154,10 +161,6 @@ public class ActionManager {
       QueuedClick click = this.queuedClick;
       if (click == null) {
          return ActionManager.SendResult.NO_QUEUED_ACTION;
-      } else if (!PacketRateLimiter.allowAction()) {
-         // 「自动限制发包上限」：本 tick 令牌已用尽 → 放弃这次点击，
-         // 打印机稍后会按放置冷却 / 重试表重新排队（RESERVE_LIMIT 会被视为"本轮跳过"）。
-         return this.finish(click, ActionManager.SendResult.RESERVE_LIMIT);
       } else {
          if (this.useProtocol && this.hitModifier != null) {
             click.useProtocolHit(this.hitModifier);
@@ -167,8 +170,13 @@ public class ActionManager {
             return this.finish(click, ActionManager.SendResult.NO_PLAYER);
          } else if (this.shouldDropStaleQueuedClick(player, click)) {
             return this.finish(click, ActionManager.SendResult.STALE_POSITION);
+         } else if (!click.contextValid()) {
+            // 等待转向期间世界/目标格位/相邻格位变了：按旧面发会点错，整次作废（调用方会重新排队）
+            return this.finish(click, ActionManager.SendResult.STALE_POSITION);
          } else {
-            if (!this.needWaitModifyLook && this.look != null && this.shouldSendQueuedLook(this.look)) {
+            // 不能用 needWaitModifyLook 做门限：等待转向期间朝向可能已被别的移动包覆盖，
+            // 恢复发送时必须无条件先补发一次朝向包，否则服务端看到的是旧朝向
+            if (this.look != null && this.shouldSendQueuedLook(this.look)) {
                PacketUtils.sendLookPacket(player, this.look);
                this.recordQueuedLook(this.look);
             }
@@ -205,7 +213,10 @@ public class ActionManager {
                      if (!click.useProtocol) {
                         Vec3 targetCenter = Vec3.atCenterOf(click.target);
                         Vec3 sideOffset = Vec3.atLowerCornerOf(BlockUtils.getVector(click.side)).scale(0.5);
-                        Vec3 rotatedHitModifier = click.hitModifier.yRot((direction.toYRot() + 90.0F) % 360.0F).scale(0.5);
+                        // 注意单位：Direction.toYRot() 返回「度」，Vec3.yRot() 要「弧度」，必须先换算
+                        Vec3 rotatedHitModifier = click.hitModifier
+                           .yRot(((direction.toYRot() + 90.0F) % 360.0F) * 0.017453292f)
+                           .scale(0.5);
                         hitVec = targetCenter.add(sideOffset).add(rotatedHitModifier);
                         // ★ 命中点计算与原版 EMT 完全一致（中心+面×0.5+旋转修饰），不要做任何投影/修正：
                         //   2026-10-10 曾加过"骑乘时投影回非完整方块轮廓"，但 shape.clip 会返回射线进入面
@@ -238,8 +249,8 @@ public class ActionManager {
                                  break;
                               }
 
-                              boolean interactionAccepted = gameModeExtension.litematica_printer$useItemOn(
-                                    localPrediction, useHand, blockHitResult
+                              boolean interactionAccepted = useItemOnWithLook(
+                                    gameModeExtension, localPrediction, useHand, blockHitResult, player, this.look
                                  )
                                  != InteractionResult.FAIL;
                               var21 |= interactionAccepted;
@@ -248,12 +259,20 @@ public class ActionManager {
                               }
 
                               if (interactionAccepted && allowance != Integer.MAX_VALUE) {
-                                 Item consumedItem = player.getItemInHand(useHand).getItem();
+                                 // 用交互「前」记下的物品：最后一份用完后再读手里会变成空气/换槽，消耗就记错了
+                                 Item consumedItem = this.reservedItem != null
+                                    ? this.reservedItem
+                                    : player.getItemInHand(useHand).getItem();
                                  this.reservePendingConsumed.merge(consumedItem, 1, Integer::sum);
                                  this.reservePendingLastMoveTick
                                     .put(consumedItem, Reference.MINECRAFT.level == null ? 0L : Reference.MINECRAFT.level.getGameTime());
                               }
                            }
+                        } catch (RuntimeException e) {
+                           // 交互抛异常：队列必须清掉，否则下一 tick 会把同一次点击再发一遍；
+                           // 玩家状态（潜行/标志位）仍由 finally 统一恢复
+                           this.clearQueue();
+                           throw e;
                         } finally {
                            this.printerInteractionActive = false;
                            this.easyPlaceProtocolActive = false;
@@ -334,8 +353,16 @@ public class ActionManager {
    }
 
    private int getReserveAllowance(LocalPlayer player, QueuedClick click, InteractionHand hand) {
+      // 每一轮（含重复点击的每一轮）都重检手持物：中途用完/换槽就应当停下，不能拿别的物品接着点
+      if (!isHoldingExpectedItem(player, click, hand)) {
+         this.reservedItem = null;
+         return 0;
+      }
+
+      ItemStack heldSnapshot = player.getItemInHand(hand);
+      this.reservedItem = heldSnapshot.isEmpty() ? null : heldSnapshot.getItem();
       if (click.source == ActionManager.ActionSource.PRINT && Configs.Print.PRINT_RESERVE_ITEMS.getBooleanValue()) {
-         ItemStack held = player.getItemInHand(hand);
+         ItemStack held = heldSnapshot;
          int reserveCount = Configs.Print.PRINT_RESERVE_ITEM_COUNT.getIntegerValue();
          if (reserveCount >= 0 && !PlayerUtils.getAbilities(player).instabuild && !held.isEmpty() && !held.isDamageableItem()) {
             Predicate<ItemStack> predicate = click.expectedStackPredicate != null
@@ -384,6 +411,7 @@ public class ActionManager {
    }
 
    private ActionManager.SendResult finish(QueuedClick click, ActionManager.SendResult result) {
+      this.recordSent(click, result);
       Consumer<ActionManager.SendResult> completionListener = click.completionListener;
       this.clearQueue();
       if (completionListener != null) {
@@ -555,11 +583,21 @@ public class ActionManager {
       return Math.abs(Mth.wrapDegrees(player.getYRot() - look.yaw())) <= 1.0F && Math.abs(player.getXRot() - look.pitch()) <= 1.0F;
    }
 
+   /**
+    * 同一 tick 内只发一次「相同朝向」的朝向包；跨 tick 仍然无条件重发。
+    * <p>
+    * 跨 tick 不能去重（fix1 的教训）：等待转向期间朝向可能已被别的移动包覆盖，恢复发送时必须补发，
+    * 否则服务端看到的朝向与点击面不符。
+    * 同一 tick 可以去重：一个 tick 内玩家自己的移动包至多一个，之后发的朝向包不会被覆盖；
+    * 填充模式一 tick 能连放几十个同朝向的方块，逐格重发只是把带宽与服务端负载放大几十倍
+    * （服务端处理不过来就表现为「方块一顿一顿地冒出来」）。
+    */
    private boolean shouldSendQueuedLook(PlayerLook look) {
       long tick = Reference.MINECRAFT.level == null ? Long.MIN_VALUE : Reference.MINECRAFT.level.getGameTime();
-      return tick != Long.MIN_VALUE && this.lastQueuedLookTick == tick
-         ? Math.abs(Mth.wrapDegrees(this.lastQueuedLookYaw - look.yaw())) > 1.0F || Math.abs(this.lastQueuedLookPitch - look.pitch()) > 1.0F
-         : true;
+      return tick == Long.MIN_VALUE
+         || tick != this.lastQueuedLookTick
+         || Math.abs(look.yaw() - this.lastQueuedLookYaw) > 1.0E-4F
+         || Math.abs(look.pitch() - this.lastQueuedLookPitch) > 1.0E-4F;
    }
 
    private void recordQueuedLook(PlayerLook look) {
@@ -589,6 +627,93 @@ public class ActionManager {
       this.nextPrintSignEditPruneNanos = 0L;
       this.clearTaskAnvilScreenSuppressions();
       this.manualAnvilScreenAllowanceDeadlineNanos = 0L;
+      // 换世界/重连：保留量与消耗归属、朝向缓存全部作废，否则会按旧会话的数据继续算
+      this.reservePendingConsumed.clear();
+      this.reserveLastSeenCount.clear();
+      this.reservePendingLastMoveTick.clear();
+      this.reservedItem = null;
+      this.lastQueuedLookTick = Long.MIN_VALUE;
+      this.lastQueuedLookYaw = 0.0F;
+      this.lastQueuedLookPitch = 0.0F;
+      // 换世界/重连：上一局登记过的「已发送未确认」坐标全部作废
+      PlacementPending.reset();
+   }
+
+   /**
+    * 普通（非包模式）放置是本机预测，原版 {@code useItemOn} 会用玩家当前的 yaw/pitch 决定
+    * 楼梯/半砖等方块的朝向与上下半区，而打印机是"先转向再点击"，预测就会和服务的观感不一致。
+    * 这里在调用期间临时改成打印机的朝向，调用结束（含异常）立刻恢复原值；
+    * 包模式发送的是纯服务端交互，不需要也不应该改本地视角。
+    */
+   private static InteractionResult useItemOnWithLook(
+      MultiPlayerGameModeExtension gameMode,
+      boolean localPrediction,
+      InteractionHand hand,
+      BlockHitResult hitResult,
+      LocalPlayer player,
+      @Nullable PlayerLook look
+   ) {
+      if (!localPrediction || look == null) {
+         return gameMode.litematica_printer$useItemOn(localPrediction, hand, hitResult);
+      }
+
+      float yaw = player.getYRot();
+      float pitch = player.getXRot();
+
+      try {
+         player.setYRot(look.yaw());
+         player.setXRot(look.pitch());
+         return gameMode.litematica_printer$useItemOn(localPrediction, hand, hitResult);
+      } finally {
+         player.setYRot(yaw);
+         player.setXRot(pitch);
+      }
+   }
+
+   /**
+    * 记下这次点击真正要改的坐标和发送前状态，供 {@link PlacementPending} 在发送成功后登记。
+    * 普通放置点的是目标格本身；工具/贴脸点击（{@link ClickAction}）点的是点击面相邻格，
+    * 只有半砖（要合成双半砖，实际改的还是目标格）例外。
+    */
+   public void trackPrint(BlockPos pos, Action action) {
+      QueuedClick click = this.queuedClick;
+      ClientLevel level = Reference.MINECRAFT.level;
+      if (click == null || level == null) {
+         return;
+      }
+
+      if (action instanceof ClickAction && !(level.getBlockState(pos).getBlock() instanceof SlabBlock)) {
+         return;
+      }
+
+      click.printPos = pos.immutable();
+      click.printBefore = level.getBlockState(pos);
+   }
+
+   /** 只有真正发出的点击才登记；被拒绝/取消的不该挡住后续打印 */
+   private void recordSent(QueuedClick click, ActionManager.SendResult result) {
+      if (result != ActionManager.SendResult.SENT || click.printPos == null || click.printBefore == null) {
+         return;
+      }
+
+      ClientLevel level = Reference.MINECRAFT.level;
+      if (level == null) {
+         return;
+      }
+
+      PlacementPending.begin(level, click.printPos.asLong(), click.printBefore, currentLatencyMs());
+   }
+
+   /** 客户端记录的服务器延迟（毫秒）；取不到返回 -1，由待确认表用保守的默认窗口 */
+   private static int currentLatencyMs() {
+      ClientPacketListener connection = Reference.MINECRAFT.getConnection();
+      LocalPlayer player = Reference.MINECRAFT.player;
+      if (connection == null || player == null) {
+         return -1;
+      }
+
+      PlayerInfo info = connection.getPlayerInfo(player.getUUID());
+      return info == null ? -1 : info.getLatency();
    }
 
    @Generated

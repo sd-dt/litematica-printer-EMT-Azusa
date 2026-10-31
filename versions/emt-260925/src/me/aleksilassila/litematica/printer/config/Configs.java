@@ -41,6 +41,7 @@ import me.aleksilassila.litematica.printer.enums.FillBlockModeType;
 import me.aleksilassila.litematica.printer.enums.FillModeFacingType;
 import me.aleksilassila.litematica.printer.enums.FluidAvoidStrategyType;
 import me.aleksilassila.litematica.printer.enums.IterationOrderType;
+import me.aleksilassila.litematica.printer.enums.ListMatchMode;
 import me.aleksilassila.litematica.printer.enums.PrintModeType;
 import me.aleksilassila.litematica.printer.enums.RadiusShapeType;
 import me.aleksilassila.litematica.printer.enums.SectionScanOrderType;
@@ -48,6 +49,7 @@ import me.aleksilassila.litematica.printer.enums.SelectionType;
 import me.aleksilassila.litematica.printer.enums.WorkingModeType;
 import me.aleksilassila.litematica.printer.gui.ConfigUi;
 import me.aleksilassila.litematica.printer.utils.MessageUtils;
+import me.aleksilassila.litematica.printer.utils.PinYinSearchUtils;
 import me.aleksilassila.litematica.printer.utils.ModUtils;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.world.level.block.Blocks;
@@ -218,20 +220,17 @@ public class Configs extends ConfigBuilders implements IConfigHandler {
       public static final ConfigBoolean QUICK_SHULKER = ConfigBuilders.bool("quickShulker").defaultValue(false).build();
       public static final ConfigInteger QUICK_SHULKER_MAX_STACKS = ConfigBuilders.integer("quickShulkerMaxStacks").defaultValue(1).range(1, 27).build();
       public static final ConfigInteger QUICK_SHULKER_COOLDOWN = ConfigBuilders.integer("quickShulkerCooldown").defaultValue(10).range(0, 20).build();
-public static final ConfigBoolean AUTO_PACKET_LIMIT = ConfigBuilders.bool("autoPacketLimit").defaultValue(false).build();
-      /**
-       * 「重置发包上限」按钮：在配置界面里就是一个可点的 ON/OFF 按钮（malilib 没有独立的按钮型配置项），
-       * 点一下（切成"开"）就清空所有服务器学到的发包上限记录，然后立刻弹回"关"，方便再点。
-       * 具体逻辑接在 {@code InitHandler.initConfigCallback()} 里。
-       */
-      public static final ConfigBoolean RESET_PACKET_LIMIT = ConfigBuilders.bool("resetPacketLimit").defaultValue(false).build();
       public static final ConfigBoolean AUTO_TOOL_SWITCH = ConfigBuilders.bool("autoToolSwitch").defaultValue(true).build();
+      /** 黑白名单关键词提取方式：模糊（包含匹配，原有行为）/ 精确（必须完整名字）。改动后让各名单缓存重建 */
+      public static final ConfigOptionList LIST_MATCH_MODE = ConfigBuilders.optionList("listMatchMode")
+         .defaultValue(ListMatchMode.FUZZY)
+         .addValueChangeListener(config -> PinYinSearchUtils.bumpMatchModeRevision())
+         .build();
       public static final ImmutableList<IConfigBase> OPTIONS = ImmutableList.of(
          WORK_SWITCH,
          AUTO_TOOL_SWITCH,
+         LIST_MATCH_MODE,
          HUD_WORK_STATUS,
-         AUTO_PACKET_LIMIT,
-         RESET_PACKET_LIMIT,
          WORK_MODE,
          WORK_MODE_TYPE,
          PRINT,
@@ -302,7 +301,16 @@ public static final ConfigBoolean AUTO_PACKET_LIMIT = ConfigBuilders.bool("autoP
       public static final ConfigBoolean FLUID_SIMPLE_MODE = ConfigBuilders.bool("fluidSimpleMode").defaultValue(false).build();
       /** 秒破方块排流体（LPCTools liquidCleaner 移植）：与更好的排流体互斥时优先生效 */
       public static final ConfigBoolean FLUID_INSTANT_BREAK_MODE = ConfigBuilders.bool("fluidInstantBreakMode").defaultValue(false).build();
-      public static final ImmutableList<IConfigBase> OPTIONS = ImmutableList.of(FLUID_SELECTION_TYPE, FLUID_SIMPLE_MODE, FLUID_INSTANT_BREAK_MODE, FILL_FLOWING_FLUID, FLUID_REPLACE_BLOCK_LIST, FLUID_LIST);
+      /**
+       * 排流体自扫描的外扩格数：扫描半径 = 「核心 → 工作范围」({@code workRange}) + 本项。
+       * <p>
+       * 2026-10-24 之前三条排流体路径都硬编码水平半径 8，与选区基准（workRange 默认 6、
+       * 原版交互距离 5）脱钩 —— 相对交互距离正好外扩 3 格，表现为「选区偏移多出去三格」
+       * 与「在选区外打出多余方块」。现在改成跟随 workRange，本项控制外扩多少：
+       * 0 = 严格贴选区，1 = 比选区多一格（默认，用户要求的语义）。</p>
+       */
+      public static final ConfigInteger FLUID_SCAN_MARGIN = ConfigBuilders.integer("fluidScanMargin").defaultValue(1).range(0, 16).build();
+      public static final ImmutableList<IConfigBase> OPTIONS = ImmutableList.of(FLUID_SELECTION_TYPE, FLUID_SIMPLE_MODE, FLUID_INSTANT_BREAK_MODE, FILL_FLOWING_FLUID, FLUID_REPLACE_BLOCK_LIST, FLUID_LIST, FLUID_SCAN_MARGIN);
    }
 
    public static class Go {
@@ -554,6 +562,8 @@ public static final ConfigBoolean AUTO_PACKET_LIMIT = ConfigBuilders.bool("autoP
          .build();
       public static final ConfigBoolean EASY_PLACE_PROTOCOL = ConfigBuilders.bool("easyPlaceProtocol").defaultValue(false).build();
       public static final ConfigBoolean PLACE_IN_AIR = ConfigBuilders.bool("placeInAir").defaultValue(true).build();
+      /** 选取方块时，若可选取的快捷栏槽全被工具占满，自动把一个工具挪进背包空槽来腾位 */
+      public static final ConfigBoolean FREE_PICK_BLOCK_SLOT = ConfigBuilders.bool("freePickBlockSlot").defaultValue(true).build();
       public static final ConfigBoolean PRINT_FAST_DIRECTIONAL_PLACEMENT = ConfigBuilders.bool("printFastDirectionalPlacement").defaultValue(false).build();
       public static final ConfigBoolean PRINT_ONLY_EMPTY_SHULKER = ConfigBuilders.bool("printOnlyEmptyShulker").defaultValue(false).build();
       public static final ConfigBoolean PRINT_SKIP_SHULKER = ConfigBuilders.bool("printSkipShulker").defaultValue(false).build();
@@ -632,6 +642,7 @@ public static final ConfigBoolean AUTO_PACKET_LIMIT = ConfigBuilders.bool("autoP
          PRINT_SELECTION_TYPE,
          EASY_PLACE_PROTOCOL,
          PLACE_IN_AIR,
+         FREE_PICK_BLOCK_SLOT,
          PRINT_FORCED_SNEAK,
          BREAK_WRONG_BLOCK,
          BREAK_EXTRA_BLOCK,

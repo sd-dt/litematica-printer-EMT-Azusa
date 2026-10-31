@@ -308,6 +308,12 @@ public class Action {
             );
       }
 
+      // 动作声明了物品栈约束（例如炼药锅只认水瓶）时必须真正接进队列；
+      // 只存字段不接线 = 看起来支持、实际不生效
+      if (this.requiredStackPredicate != null) {
+         ActionManager.INSTANCE.setExpectedStackPredicate(this.requiredStackPredicate);
+      }
+
       return this;
    }
 

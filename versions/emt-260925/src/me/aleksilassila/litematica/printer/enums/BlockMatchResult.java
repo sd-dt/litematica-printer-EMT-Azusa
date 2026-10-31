@@ -17,6 +17,7 @@ public enum BlockMatchResult {
 
    private static final IdentityHashMap<BlockState, Boolean> COVER_LIST_CACHE = new IdentityHashMap<>();
    private static List<String> coverListSnapshot = List.of();
+   private static int coverListMatchModeRevision = -1;
 
    public static BlockMatchResult compare(SchematicBlockContext context, Property<?>... propertiesToIgnore) {
       return propertiesToIgnore.length == 0 ? compare(context.requiredState, context.currentState) : compareWithIgnoredProperties(context, propertiesToIgnore);
@@ -46,8 +47,10 @@ public enum BlockMatchResult {
 
    private static boolean matchesCoverList(BlockState state) {
       List<String> list = Configs.Print.REPLACEABLE_LIST.getStrings();
-      if (list != coverListSnapshot) {
+      int matchModeRevision = PinYinSearchUtils.getMatchModeRevision();
+      if (list != coverListSnapshot || matchModeRevision != coverListMatchModeRevision) {
          coverListSnapshot = List.copyOf(list);
+         coverListMatchModeRevision = matchModeRevision;
          COVER_LIST_CACHE.clear();
       }
 

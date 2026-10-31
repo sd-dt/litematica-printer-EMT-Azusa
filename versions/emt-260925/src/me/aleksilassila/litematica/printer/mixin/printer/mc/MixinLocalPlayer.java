@@ -10,7 +10,6 @@ import me.aleksilassila.litematica.printer.printer.RenderOnlyBlockCache;
 import me.aleksilassila.litematica.printer.printer.zxy.inventory.InventoryUtils;
 import me.aleksilassila.litematica.printer.printer.zxy.utils.ZxyUtils;
 import me.aleksilassila.litematica.printer.utils.BreakUtils;
-import me.aleksilassila.litematica.printer.utils.PacketRateLimiter;
 import me.aleksilassila.litematica.printer.utils.CloudStoreUtils;
 import me.aleksilassila.litematica.printer.utils.ConfigUtils;
 import me.aleksilassila.litematica.printer.utils.EatUtils;
@@ -58,8 +57,7 @@ public class MixinLocalPlayer extends AbstractClientPlayer {
    )
    public void tick(CallbackInfo ci) {
       ClientPlayerTickManager.updateTickHandlerTime();
-      // 限流器采样/自适应必须每 tick 都跑（破坏队列非空时处理器循环会被跳过）
-      PacketRateLimiter.tick(ClientPlayerTickManager.getPacketTick());
+      ClientPlayerTickManager.checkDimensionChange(this.minecraft.level);
       ConfigUtils.tickAutoEnable();
       RenderOnlyBlockCache.tickPendingReload();
       BlockPosCooldownManager.INSTANCE.tick();

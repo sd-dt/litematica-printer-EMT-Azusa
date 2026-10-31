@@ -4,6 +4,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Stream;
+import me.aleksilassila.litematica.printer.config.Configs;
+import me.aleksilassila.litematica.printer.enums.ListMatchMode;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.tags.TagKey;
 import net.minecraft.world.item.Item;
@@ -105,11 +107,25 @@ public class PinYinSearchUtils {
     * {@code c} 规则保留解析（兼容旧条目），但已无额外作用。
     */
    public static boolean matchString(String targetStr, String matchStr, String[] matchRules) {
-      if (targetStr != null && matchStr != null && !matchStr.isEmpty()) {
-         return targetStr.contains(matchStr);
-      } else {
+      if (targetStr == null || matchStr == null || matchStr.isEmpty()) {
          return false;
       }
+      // 精确模式：必须完整写出目标名字（忽略首尾空白与大小写），不再做包含匹配
+      if (Configs.Core.LIST_MATCH_MODE.getOptionListValue().equals(ListMatchMode.EXACT)) {
+         return targetStr.trim().equalsIgnoreCase(matchStr.trim());
+      }
+      return targetStr.contains(matchStr);
+   }
+
+   /** 名单匹配模式版本号：Core.listMatchMode 变更后递增，各名单缓存据此失效重建 */
+   private static volatile int matchModeRevision = 0;
+
+   public static int getMatchModeRevision() {
+      return matchModeRevision;
+   }
+
+   public static void bumpMatchModeRevision() {
+      matchModeRevision++;
    }
 
    public static boolean matchBlockName(String expectedName, BlockState blockState) {

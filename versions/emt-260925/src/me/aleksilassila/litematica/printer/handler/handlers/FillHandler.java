@@ -27,6 +27,7 @@ import net.minecraft.world.level.block.state.BlockState;
 public class FillHandler extends ClientPlayerTickHandler {
    public static final String NAME = "fill";
    private List<String> fillCacheBlocklist = new ArrayList<>();
+   private int fillBlockMatchModeRevision = -1;
    private Item[] fillModeItemList = new Item[0];
 
    public FillHandler() {
@@ -49,7 +50,9 @@ public class FillHandler extends ClientPlayerTickHandler {
       switch (fillMode) {
          case BLOCKLIST:
             List<String> strings = Configs.Fill.FILL_BLOCK_LIST.getStrings();
-            if (!strings.equals(this.fillCacheBlocklist)) {
+            int rev = PinYinSearchUtils.getMatchModeRevision();
+            if (rev != this.fillBlockMatchModeRevision || !strings.equals(this.fillCacheBlocklist)) {
+               this.fillBlockMatchModeRevision = rev;
                this.fillCacheBlocklist = new ArrayList<>(strings);
                this.fillModeItemList = new Item[0];
                if (strings.isEmpty()) {
@@ -92,13 +95,29 @@ public class FillHandler extends ClientPlayerTickHandler {
       }
    }
 
+   /** 主手已经是填充物时不必再扫背包/发切槽包（填充一 tick 能连放几十格，逐格切手会把包量放大一倍） */
+   private boolean isHoldingFillItem() {
+      ItemStack held = this.player.getMainHandItem();
+      if (held.isEmpty()) {
+         return false;
+      }
+
+      for (Item item : this.fillModeItemList) {
+         if (held.getItem().equals(item)) {
+            return true;
+         }
+      }
+
+      return false;
+   }
+
    @Override
    protected void executeIteration(BlockPos blockPos, AtomicReference<Boolean> skipIteration) {
       BlockState currentState = this.level.getBlockState(blockPos);
       if (currentState.isAir()
          || currentState.getBlock() instanceof LiquidBlock
          || Configs.Print.REPLACEABLE_LIST.getStrings().stream().anyMatch(s -> PinYinSearchUtils.matchName(s, currentState))) {
-         if (!InventoryUtils.switchToItems(this.player, this.fillModeItemList)) {
+         if (!this.isHoldingFillItem() && !InventoryUtils.switchToItems(this.player, this.fillModeItemList)) {
             return;
          }
 

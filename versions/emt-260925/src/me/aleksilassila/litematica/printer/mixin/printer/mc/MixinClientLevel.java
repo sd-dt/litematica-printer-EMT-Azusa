@@ -28,28 +28,20 @@ public abstract class MixinClientLevel implements PacketUtils.SequenceExtension 
 
    @Override
    public int litematica_printer3$getSequence() {
-      BlockStatePredictionHandler pendingUpdateManager = this.blockStatePredictionHandler;
+      BlockStatePredictionHandler handler = this.blockStatePredictionHandler;
+      // 包模式的序号只在预测作用域内递增：作用域没开就自己开一个再关，
+      // 否则多次点击会复用同一个序号，服务端的预测确认对不上。
+      if (handler.isPredicting()) {
+         return handler.currentSequence();
+      }
 
-      int var2;
+      handler.startPredicting();
+
       try {
-         var2 = pendingUpdateManager.currentSequence();
-      } catch (Throwable var5) {
-         if (pendingUpdateManager != null) {
-            try {
-               pendingUpdateManager.close();
-            } catch (Throwable var4) {
-               var5.addSuppressed(var4);
-            }
-         }
-
-         throw var5;
+         return handler.currentSequence();
+      } finally {
+         handler.close();
       }
-
-      if (pendingUpdateManager != null) {
-         pendingUpdateManager.close();
-      }
-
-      return var2;
    }
 
    @Inject(

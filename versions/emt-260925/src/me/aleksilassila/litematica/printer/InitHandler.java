@@ -10,7 +10,6 @@ import me.aleksilassila.litematica.printer.printer.verifier.PendingChunkRenderer
 import me.aleksilassila.litematica.printer.printer.verifier.VerifierRegistry;
 import me.aleksilassila.litematica.printer.printer.zxy.utils.HighlightBlockRenderer;
 import me.aleksilassila.litematica.printer.utils.MessageUtils;
-import me.aleksilassila.litematica.printer.utils.PacketRateLimiter;
 import me.aleksilassila.litematica.printer.utils.ModUtils;
 
 public class InitHandler implements IInitializationHandler {
@@ -39,8 +38,6 @@ public class InitHandler implements IInitializationHandler {
             ActionManager.INSTANCE.clearQueue();
             // 自研破基岩流程：关掉打印机时清空目标机器与队列
             BreakingFlowController.clearAll();
-            // 关掉打印机时复位发包限流状态，避免把上一次的降速带到下次
-            PacketRateLimiter.reset();
          }
       });
       Configs.Core.WORK_MODE_TYPE.setValueChangeCallback(b -> {
@@ -63,16 +60,5 @@ public class InitHandler implements IInitializationHandler {
       Configs.Mine.EXCAVATE_LIMIT.setValueChangeCallback(b -> ConfigUi.refresh());
       Configs.Fill.FILL_BLOCK_MODE.setValueChangeCallback(b -> ConfigUi.refresh());
       Configs.Core.LAG_CHECK.setValueChangeCallback(b -> ConfigUi.refresh());
-      // 重置发包上限：点一下（切成"开"）就清空所有服务器学到的上限记录，然后立刻弹回"关"
-      Configs.Core.RESET_PACKET_LIMIT.setValueChangeCallback(b -> {
-         if (!b.getBooleanValue()) {
-            return;
-         }
-
-         int cleared = PacketRateLimiter.clearLearned();
-         MessageUtils.setOverlayMessage(I18n.of("message.packetLimitCleared").getName(cleared).getString());
-         b.setBooleanValue(false);
-         ConfigUi.refresh();
-      });
    }
 }

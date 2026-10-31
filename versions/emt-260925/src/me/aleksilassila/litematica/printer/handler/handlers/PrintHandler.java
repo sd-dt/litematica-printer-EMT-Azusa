@@ -25,6 +25,7 @@ import me.aleksilassila.litematica.printer.handler.ClientPlayerTickHandler;
 import me.aleksilassila.litematica.printer.handler.ClientPlayerTickManager;
 import me.aleksilassila.litematica.printer.interfaces.Implementation;
 import me.aleksilassila.litematica.printer.printer.ActionManager;
+import me.aleksilassila.litematica.printer.printer.PlacementPending;
 import me.aleksilassila.litematica.printer.printer.PrintTaskController;
 import me.aleksilassila.litematica.printer.printer.PrinterBox;
 import me.aleksilassila.litematica.printer.printer.ScanWhitelistCache;
@@ -308,6 +309,12 @@ public class PrintHandler extends ClientPlayerTickHandler {
 
    @Override
    public boolean canProcessPos(BlockPos blockPos) {
+      // 上一次点击还在等服务端确认：这个坐标先跳过。
+      // 发包放置没有客户端预测，这期间再点一次会被服务端当成"贴在相邻面放置"
+      if (client.level != null && PlacementPending.blocked(client.level, blockPos.asLong())) {
+         return false;
+      }
+
       if (!Configs.Print.PLACE_SAME_ITEM_FIRST.getBooleanValue()) {
          this.activePlacementItem = null;
          this.nextPlacementItemTick = 0L;
@@ -381,6 +388,21 @@ public class PrintHandler extends ClientPlayerTickHandler {
             }
          }
       }
+   }
+
+   /** 切换维度/重开世界时清掉快速重试表与本轮缓存的选物/扫描记忆，否则旧坐标会一直被当成"待重试" */
+   public void resetFastRetry() {
+      this.retryTable.clear();
+      this.pendingConfirm.clear();
+      // 选物轮转、扫描记忆、SchematicBlockContext 都绑定上一会话的世界与坐标，必须一起清
+      this.action = null;
+      this.ctx = null;
+      this.activePlacementItem = null;
+      this.nextPlacementItemTick = 0L;
+      this.lastActivePlacementTick = 0L;
+      this.memoScanItem = null;
+      this.memoScanRevision = Long.MIN_VALUE;
+      this.memoScanTick = Long.MIN_VALUE;
    }
 
    @Override
@@ -485,6 +507,8 @@ public class PrintHandler extends ClientPlayerTickHandler {
                   } else {
                      this.action.setActionSource(ActionManager.ActionSource.PRINT);
                      this.action.queueAction(blockPos, side, useShift, this.player, reqItems);
+                     // 记下这一击真正要改的坐标与发送前状态：发送成功后登记进待确认表
+                     ActionManager.INSTANCE.trackPrint(blockPos, this.action);
                      if (this.icePlacementTask) {
                         ActionManager.INSTANCE.setQueueCompletionListener(sendResultx -> {
                            if (sendResultx.isSent()) {
@@ -757,12 +781,15 @@ public class PrintHandler extends ClientPlayerTickHandler {
       private static boolean enabled;
       private static List<String> patterns = List.of();
       private static final Map<BlockState, Boolean> matchCache = new HashMap<>();
+      private static int matchModeRevision = -1;
 
       static boolean isSkipped(BlockState requiredState) {
          boolean en = Configs.Print.PRINT_SKIP.getBooleanValue();
          List<String> cur = Configs.Print.PRINT_SKIP_LIST.getStrings();
-         if (en != enabled || cur.size() != source.size() || !cur.equals(source)) {
+         int rev = PinYinSearchUtils.getMatchModeRevision();
+         if (en != enabled || rev != matchModeRevision || cur.size() != source.size() || !cur.equals(source)) {
             enabled = en;
+            matchModeRevision = rev;
             source = List.copyOf(cur);
             patterns = List.copyOf(cur);
             matchCache.clear();

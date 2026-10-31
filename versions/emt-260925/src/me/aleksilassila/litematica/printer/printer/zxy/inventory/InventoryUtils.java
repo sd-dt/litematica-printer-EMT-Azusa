@@ -42,7 +42,21 @@ public class InventoryUtils {
     * 背包满（快捷潜影盒取不出东西）之后的退避 tick 数（5 秒）：不再反复开盒打断打印。
     */
    private static final int QUICK_SHULKER_FULL_BACKOFF_TICKS = 100;
+   /**
+    * 开盒点击没被服务端响应（盒子没开、容器也没来）时的重试间隔与次数。
+    * 第一次点击可能被服务端插件/反作弊吞掉或赶上服务端卡顿，单次点击就判失败在实测里表现为「经常打开失败」。
+    */
+   private static final long QUICK_SHULKER_OPEN_RETRY_INTERVAL_NANOS = 500000000L;
+   private static final int QUICK_SHULKER_OPEN_MAX_ATTEMPTS = 3;
+   /**
+    * 开盒失败后的退避 tick 数（2 秒）：短时间内别反复开盒，
+    * 免得连续失败刷屏、每次都把打印打断 3 秒。
+    */
+   private static final int QUICK_SHULKER_OPEN_FAIL_BACKOFF_TICKS = 40;
    private static int shulkerCooldown = 0;
+   private static int quickShulkerOpenAttempts;
+   private static long quickShulkerNextAttemptNanos;
+   private static int quickShulkerOpenFailBackoffTicks;
    private static long quickShulkerSearchDeadlineNanos;
    private static long quickShulkerOpenDeadlineNanos;
    private static int quickShulkerFullBackoffTicks;
@@ -161,7 +175,7 @@ public class InventoryUtils {
 
    public static boolean switchItem() {
       // 背包满退避中就先别再开盒了 —— 每次开盒都会打断打印（tick 循环整段跳过），而背包没地方放，取出也白取。
-      if (quickShulkerFullBackoffTicks > 0) {
+      if (quickShulkerFullBackoffTicks > 0 || quickShulkerOpenFailBackoffTicks > 0) {
          return false;
       }
 
@@ -264,6 +278,8 @@ public class InventoryUtils {
       lastNeedItemList = new HashSet<>();
       quickShulkerSearchDeadlineNanos = 0L;
       quickShulkerOpenDeadlineNanos = 0L;
+      quickShulkerOpenAttempts = 0;
+      quickShulkerNextAttemptNanos = 0L;
       isOpenHandler = false;
       HandRestockShulkerCompat.onQuickShulkerTransferFinished(player);
       AbstractContainerMenu currentMenu = player.containerMenu;
@@ -291,33 +307,105 @@ public class InventoryUtils {
    private static boolean openShulker(HashSet<Item> items) {
       if (shulkerCooldown > 0) {
          return false;
-      } else {
-         for (Item item : items) {
-            AbstractContainerMenu sc = Minecraft.getInstance().player.inventoryMenu;
+      }
 
-            for (int i = 9; i < sc.slots.size(); i++) {
-               ItemStack stack = ((Slot)sc.slots.get(i)).getItem();
-               String itemid = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
-               if (itemid.contains("shulker_box") && stack.getCount() == 1) {
-                  NonNullList<ItemStack> items1 = fi.dy.masa.malilib.util.InventoryUtils.getStoredItems(stack, -1);
-                  if (items1.stream().anyMatch(s1 -> s1.getItem().equals(item))) {
-                     try {
-                        shulkerBoxSlot = i;
-                        snapshotQuickShulkerInventory(Minecraft.getInstance().player.getInventory());
-                        BlockUtils.openShulker(stack, shulkerBoxSlot);
-                        automatedQuickShulkerOpened = true;
-                        isOpenHandler = true;
-                        shulkerCooldown = Configs.Core.QUICK_SHULKER_COOLDOWN.getIntegerValue();
-                        quickShulkerOpenDeadlineNanos = System.nanoTime() + QUICK_SHULKER_OPEN_TIMEOUT_NANOS;
-                        return true;
-                     } catch (Exception var9) {
-                     }
-                  }
-               }
-            }
+      LocalPlayer player = client.player;
+      if (player == null || client.gameMode == null) {
+         return false;
+      }
+
+      // 只在自己背包界面里开盒；光标上还挂着东西时点盒子会先把光标物品放下/换位，必须等光标清空
+      if (!player.containerMenu.equals(player.inventoryMenu) || !player.containerMenu.getCarried().isEmpty()) {
+         return false;
+      }
+
+      int slot = findShulkerSlotContaining(items);
+      if (slot < 0) {
+         return false;
+      }
+
+      try {
+         quickShulkerOpenAttempts = 1;
+         quickShulkerOpenDeadlineNanos = System.nanoTime() + QUICK_SHULKER_OPEN_TIMEOUT_NANOS;
+         return sendOpenShulkerClick(player, player.inventoryMenu.slots.get(slot).getItem(), slot);
+      } catch (Exception var9) {
+         return false;
+      }
+   }
+
+   /** 在背包（含快捷栏/副手）里找一盒装着所需物品的潜影盒；找不到返回 -1 */
+   private static int findShulkerSlotContaining(HashSet<Item> items) {
+      LocalPlayer player = client.player;
+      if (player == null || player.inventoryMenu == null) {
+         return -1;
+      }
+
+      AbstractContainerMenu menu = player.inventoryMenu;
+      for (int i = 9; i < menu.slots.size(); i++) {
+         ItemStack stack = menu.slots.get(i).getItem();
+         if (!isQuickShulkerOpenTarget(stack)) {
+            continue;
          }
 
-         return false;
+         NonNullList<ItemStack> stored = fi.dy.masa.malilib.util.InventoryUtils.getStoredItems(stack, -1);
+         if (stored.stream().anyMatch(s1 -> items.contains(s1.getItem()))) {
+            return i;
+         }
+      }
+
+      return -1;
+   }
+
+   private static boolean isQuickShulkerOpenTarget(ItemStack stack) {
+      return !stack.isEmpty() && stack.getCount() == 1 && BuiltInRegistries.ITEM.getKey(stack.getItem()).toString().contains("shulker_box");
+   }
+
+   /**
+    * 发一次开盒点击（服务端「潜影盒右键开启」插件据此打开容器）。
+    * 每次重发都要重新取当前槽里的盒子：上一次点击可能已经被服务端处理过（槽位内容会变）。
+    */
+   private static boolean sendOpenShulkerClick(LocalPlayer player, ItemStack stack, int slot) {
+      shulkerBoxSlot = slot;
+      snapshotQuickShulkerInventory(player.getInventory());
+      BlockUtils.openShulker(stack, slot);
+      automatedQuickShulkerOpened = true;
+      isOpenHandler = true;
+      shulkerCooldown = Configs.Core.QUICK_SHULKER_COOLDOWN.getIntegerValue();
+      quickShulkerNextAttemptNanos = System.nanoTime() + QUICK_SHULKER_OPEN_RETRY_INTERVAL_NANOS;
+      return true;
+   }
+
+   /**
+    * 开盒点击后迟迟等不到容器：在超时前按固定间隔重发。只在「容器还没挂上来」时重试，
+    * 否则点击会发到别的 containerId（服务端会直接丢弃，还可能误伤别的容器）。
+    */
+   private static void retryQuickShulkerOpenIfNeeded() {
+      if (!isOpenHandler || quickShulkerOpenDeadlineNanos == 0L || lastNeedItemList.isEmpty()) {
+         return;
+      }
+
+      if (quickShulkerOpenAttempts >= QUICK_SHULKER_OPEN_MAX_ATTEMPTS || System.nanoTime() < quickShulkerNextAttemptNanos) {
+         return;
+      }
+
+      LocalPlayer player = client.player;
+      if (player == null || client.gameMode == null) {
+         return;
+      }
+
+      if (!player.containerMenu.equals(player.inventoryMenu) || !player.containerMenu.getCarried().isEmpty()) {
+         return;
+      }
+
+      int slot = findShulkerSlotContaining(lastNeedItemList);
+      if (slot < 0) {
+         return;
+      }
+
+      quickShulkerOpenAttempts++;
+      try {
+         sendOpenShulkerClick(player, player.inventoryMenu.slots.get(slot).getItem(), slot);
+      } catch (Exception ignored) {
       }
    }
 
@@ -343,7 +431,15 @@ public class InventoryUtils {
       if (isOpenHandler && quickShulkerOpenDeadlineNanos != 0L && System.nanoTime() >= quickShulkerOpenDeadlineNanos) {
          LocalPlayer player = client.player;
          if (player != null) {
+            // 容器是在超过等待窗口之后才挂上来的（服务端慢/重试点击生效得晚）：
+            // 直接按正常取货流程搬运，不要再报「打开失败」并把界面丢掉。
+            if (!player.containerMenu.equals(player.inventoryMenu)) {
+               switchInv();
+               return;
+            }
+
             MessageUtils.setOverlayMessage(I18n.INVENTORY_SHULKER_OPEN_FAILED.getName());
+            quickShulkerOpenFailBackoffTicks = QUICK_SHULKER_OPEN_FAIL_BACKOFF_TICKS;
             finishQuickShulkerTransfer(player);
          } else {
             lastNeedItemList = new HashSet<>();
@@ -366,11 +462,16 @@ public class InventoryUtils {
          quickShulkerFullBackoffTicks--;
       }
 
+      if (quickShulkerOpenFailBackoffTicks > 0) {
+         quickShulkerOpenFailBackoffTicks--;
+      }
+
       if (!EatUtils.isBusy()) {
          if (client.player != null) {
             HandRestockShulkerCompat.clientTick(client.player);
          }
 
+         retryQuickShulkerOpenIfNeeded();
          abandonExpiredQuickShulkerSearch();
          if (shulkerCooldown > 0) {
             shulkerCooldown--;

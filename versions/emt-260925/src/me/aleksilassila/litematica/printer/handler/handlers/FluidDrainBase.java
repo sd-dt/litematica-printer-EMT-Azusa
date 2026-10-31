@@ -18,8 +18,8 @@ import net.minecraft.world.level.material.Fluids;
  * ══════════════════════════════════════════════════════════════════════
  *  <p>语义移植自 BiliXWhite/litematica-printer（zhaixianyu 线）的
  *  {@code Printer#replaceMode()} + {@code FLUID_BLOCK_LIST}：
- *  以玩家为中心扫一个方盒（水平半径 8、垂直 -3 ~ +1），凡是世界状态命中
- *  「流体列表」（来源方块），就用「流体填充方块列表」里的物品对准该格右键放置，
+ *  以玩家为中心扫一个方盒（水平半径 = workRange + fluidScanMargin、垂直 {@link #DY_MIN} ~ 水平半径），
+ *  凡是世界状态命中「流体列表」（来源方块），就用「流体填充方块列表」里的物品对准该格右键放置，
  *  把流体顶掉；流动液体是否处理由「包含流动液体」开关决定（对应 BiliXWhite 的
  *  {@code fluidState.isEmpty() || isSource()} 限定）。</p>
  *
@@ -29,14 +29,19 @@ import net.minecraft.world.level.material.Fluids;
  *
  *  <p>当「更好的排流体」「秒破方块排流体」两个开关都关闭时，排流体只跑本类，
  *  行为稳定、无状态、不残留任何队列。</p>
+ *
+ *  <p><b>2026-10-24 的两处修正</b>（不触碰上面的 BiliXWhite replaceMode 语义）：
+ *  ① 水平半径从硬编码 8 改为 {@code workRange + fluidScanMargin}（与另两条路径一致）——
+ *     原来相对原版交互距离 5 正好外扩 3 格，就是「选区偏移多出去三格 / 打出多余方块」；
+ *  ② 补上 {@link FluidHandler#isWithinWorkRange} 选区过滤 —— 自扫描原先完全不受
+ *     litematica 选区约束，两开关都关时会一路排到选区外面去。</p>
  */
 public final class FluidDrainBase {
    private FluidDrainBase() {
    }
 
-   private static final int RANGE = 8;
+   /** 垂直下界（水只往下流，够用）；上界跟随水平半径 —— 水也可能在玩家上方（水墙/水柱） */
    private static final int DY_MIN = -3;
-   private static final int DY_MAX = 1;
 
    /**
     * 基础逻辑的自扫描：每 tick 最多发出一个放置动作（与 BiliXWhite replaceMode 的节奏一致）。
@@ -51,12 +56,22 @@ public final class FluidDrainBase {
       }
 
       BlockPos origin = handler.player().blockPosition();
+      int range = FluidHandler.scanRange(handler);
 
-      for (int dy = DY_MIN; dy <= DY_MAX; dy++) {
-         for (int dx = -RANGE; dx <= RANGE; dx++) {
-            for (int dz = -RANGE; dz <= RANGE; dz++) {
+      // 上界用水平半径：原来只扫到 +1，玩家上方（水墙/水柱）的格不进入候选，
+      // 表现为「必须飞到水源上方才排得动」
+      for (int dy = DY_MIN; dy <= range; dy++) {
+         for (int dx = -range; dx <= range; dx++) {
+            for (int dz = -range; dz <= range; dz++) {
                BlockPos pos = origin.offset(dx, dy, dz);
                if (handler.isOnCooldown(pos)) {
+                  continue;
+               }
+
+               // ★ 2026-10-24 补：与 iterateBlocks / tickSimplePlacements / FluidInstantBreak
+               //   同一套选区判定。缺了它，基础逻辑会以玩家为中心扫满整个方盒，
+               //   完全不管 litematica 选区 —— 选区外远处的水也会被铺掉（"打出多余方块"）。
+               if (!handler.isWithinWorkRange(pos)) {
                   continue;
                }
 
@@ -98,9 +113,7 @@ public final class FluidDrainBase {
          return false;
       }
 
-      Action action = new Action()
-         .setActionSource(ActionManager.ActionSource.FLUID)
-         .queueAction(pos, Direction.UP, false, handler.player());
+      Action action = FluidHandler.createFillAction(handler, pos);
       ActionManager.INSTANCE.setNeedWaitModifyLookFromAction(action.getNeedWaitModifyLook());
       if (ActionManager.INSTANCE.sendQueue(handler.player()).isWaiting()) {
          if (skipIteration != null) {

@@ -32,6 +32,7 @@ public final class ScanWhitelistCache {
    private boolean enabled;
    private List<String> patterns = List.of();
    private final Map<BlockState, Boolean> matchCache = new HashMap<>();
+   private int matchModeRevision = -1;
    private static long highlightRefreshTick = Long.MIN_VALUE;
    private static boolean highlightAllMissing;
    private static final Set<BlockState> highlightStates = new HashSet<>();
@@ -48,8 +49,10 @@ public final class ScanWhitelistCache {
    public void beginScanBatch() {
       boolean en = this.enabledConfig.get();
       List<String> cur = this.listConfig.get();
-      if (en != this.enabled || cur.size() != this.source.size() || !cur.equals(this.source)) {
+      int rev = PinYinSearchUtils.getMatchModeRevision();
+      if (en != this.enabled || rev != this.matchModeRevision || cur.size() != this.source.size() || !cur.equals(this.source)) {
          this.enabled = en;
+         this.matchModeRevision = rev;
          this.source = List.copyOf(cur);
          this.patterns = List.copyOf(cur);
          this.matchCache.clear();

@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "id": "litematica-printer",
-  "version": "Azusa-dt261017b-26.2",
+  "version": "Azusa-dt261031b-26.2",
   "icon": "assets/litematica-printer/icon.png",
-  "name": "litematica-printer-EMT-Azusa",
+  "name": "Litematica Printer EMT Azusa! 超多功能优化打印机！",
   "authors": [
     "sd_dt",
     "MoMortis",
@@ -28,7 +28,7 @@
     "litematica-printer.tweakeroo.mixins.json"
   ],
   "depends": {
-    "minecraft": ">=26.2",
+    "minecraft": ">=26.2 <26.3",
     "malilib": ">=0.29.6",
     "litematica": ">=0.28.8",
     "fabric-content-registries-v0": "*"

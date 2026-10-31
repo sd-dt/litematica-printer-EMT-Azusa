@@ -54,7 +54,8 @@ public class SlabGuide extends Guide {
                }
             }
 
-            sides.put(side, Vec3.atLowerCornerOf(BlockUtils.getVector(half)).scale(0.25));
+            // 偏移在使用时还会再乘 0.5：0.5 → 侧面命中 1/4 / 3/4 高度，离上下分界线更远
+            sides.put(side, Vec3.atLowerCornerOf(BlockUtils.getVector(half)).scale(0.5));
          }
 
          return Result.success(new Action().setSides(sides));
@@ -66,7 +67,10 @@ public class SlabGuide extends Guide {
       if (this.slabType == SlabType.DOUBLE && this.currentState.hasProperty(SlabBlock.TYPE)) {
          SlabType current = getProperty(this.currentState, SlabBlock.TYPE).orElse(SlabType.BOTTOM);
          Direction clickFace = current == SlabType.BOTTOM ? Direction.UP : Direction.DOWN;
-         return Result.success(new ClickAction().setSides(new Direction[]{clickFace}).setItem(this.requiredBlock.asItem()));
+         // 合成双半砖时不要点当前半砖表面（y+0.5），改点完整方块的顶/底面：
+         // 偏移在使用时还会再乘 0.5，所以 ±1 正好落在方块自己的下/上表面
+         Vec3 mergeOffset = new Vec3(0.0, current == SlabType.BOTTOM ? -1.0 : 1.0, 0.0);
+         return Result.success(new ClickAction().setSides(clickFace, mergeOffset).setItem(this.requiredBlock.asItem()));
       } else {
          return Result.SKIP;
       }

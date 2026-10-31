@@ -28,6 +28,12 @@ public class MixinInventoryUtils {
             }
          }
 
+         // 所有可选取槽位都被工具/可损耗物品占满：尝试把一个工具挪进背包空槽腾位
+         int freedSlot = me.aleksilassila.litematica.printer.utils.InventoryUtils.tryFreePickBlockSlot(player);
+         if (freedSlot >= 0) {
+            return freedSlot;
+         }
+
          return -1;
       }
    }

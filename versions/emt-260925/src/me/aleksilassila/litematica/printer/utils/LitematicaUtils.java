@@ -54,12 +54,19 @@ public class LitematicaUtils {
    }
 
    public static boolean isWithinSelection1ModeRange(BlockPos pos) {
+      return isWithinSelection1ModeRange(pos, 0);
+   }
+
+   /**
+    * @param horizontalMargin 水平方向外扩的格数（东西南北各扩这么多，Y 不变）
+    */
+   public static boolean isWithinSelection1ModeRange(BlockPos pos, int horizontalMargin) {
       AreaSelection selection = DataManager.getSelectionManager().getCurrentSelection();
       if (selection == null) {
          return false;
       } else if (DataManager.getSelectionManager().getSelectionMode() == SelectionMode.NORMAL) {
          for (Box box : selection.getAllSubRegionBoxes()) {
-            if (comparePos(box, pos)) {
+            if (comparePos(box, pos, horizontalMargin)) {
                return true;
             }
          }
@@ -67,14 +74,19 @@ public class LitematicaUtils {
          return false;
       } else {
          Box boxx = selection.getSubRegionBox(DataManager.getSimpleArea().getName());
-         return comparePos(boxx, pos);
+         return comparePos(boxx, pos, horizontalMargin);
       }
    }
 
-   static boolean comparePos(Box box, BlockPos pos) {
+   static boolean comparePos(Box box, BlockPos pos, int horizontalMargin) {
       if (box != null && box.getPos1() != null && box.getPos2() != null && pos != null) {
-         PrinterBox printerBox = new PrinterBox(box.getPos1(), box.getPos2());
-         return printerBox.contains(pos);
+         // Litematica 的 pos1/pos2 保存的是「先点/后点」的两个角，pos1 不保证是最小角。
+         // 假如先给两个角各做 offset 再交给 PrinterBox 归一化，那么某个轴（取决于拖拽方向）
+         // 会由「外扩 margin」变成「内缩 margin」，表现为该轴两侧的边界列与选区外那一圈
+         // 全被判为不在工作范围（南北边界排流体不工作）。必须先归一化再统一外扩。
+         return new PrinterBox(box.getPos1(), box.getPos2())
+            .expand(horizontalMargin, 0, horizontalMargin)
+            .contains(pos);
       } else {
          return false;
       }

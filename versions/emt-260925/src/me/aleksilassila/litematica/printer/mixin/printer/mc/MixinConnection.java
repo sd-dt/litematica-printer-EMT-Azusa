@@ -26,6 +26,8 @@ public class MixinConnection {
    )
    private static void hookGenericsFtw(Packet<?> packet, PacketListener listener, CallbackInfo ci) {
       if (ConfigUtils.isPrinterEnable()) {
+         // 延迟检测用：每收到一个服务器回包就把"未回包计数"清零（MixinGui 的 LAG_CHECK 读它）。
+         // 2026-10-24 之前这里还统计所有出站包喂给发包限流器，限流器已按用户要求整体移除。
          ClientPlayerTickManager.setPacketTick(0);
       }
    }

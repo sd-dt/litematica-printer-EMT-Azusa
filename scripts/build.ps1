@@ -5,11 +5,12 @@
     powershell -ExecutionPolicy Bypass -File scripts/build.ps1                    # = -Line 26.2
     powershell -ExecutionPolicy Bypass -File scripts/build.ps1 -NoPackage         # 只编译不打包
     powershell -ExecutionPolicy Bypass -File scripts/build.ps1 -OutJar $env:TEMP\rebuilt.jar   # 校验重建用
-    powershell -ExecutionPolicy Bypass -File scripts/build.ps1 -Line 1.21.11      # 1.21.11 线已冻结，仅按需显式构筑
+    powershell -ExecutionPolicy Bypass -File scripts/build.ps1 -Line 1.21.11      # 1.21.11 线（2026-10-24 起按需构筑，见 docs\接手记录.md §三十）
 
   参数：
     -Line       构建线：26.2（默认，Mojang 官方名 / JDK 25 / class 版本 69）
-                        或 1.21.11（已冻结：intermediary 名 / JDK 21 / class 版本 65）
+                        或 1.21.11（intermediary 名 / JDK 21 / class 版本 65；
+                            2026-10-24 起与 26.x 三版本功能对齐，不再冻结）
     -Name       产物文件名（默认按下面的命名规范自动生成）
     -NoPackage  只编译，不生成 jar
     -Jdk        javac 所在 JDK 主目录；省略时按 scripts\jdk-<主版本>.path 自动探测
@@ -35,10 +36,12 @@
 #>
 param(
     # 2026-09-25 用户要求：以后只构筑 26.2 线 → -Line 默认就是 26.2；
-    # 1.21.11 线已冻结（源码/产物保留，仍可显式 -Line 1.21.11 构筑，但默认不再产出）
+    # 1.21.11 线：2026-10-24 前冻结（源码/产物保留），当天起与 26.x 三版本功能对齐、按需构筑
+    #             （见 docs\接手记录.md §三十）
     # emt-260925：2026-10-01 新增 —— 以官方 litematica-printer-EMT+260925（26.2 内层）为基线的新线，
     #             把用户此前 25 轮改动逐项搬过去；依赖/JDK/命名规则与 26.2 线完全相同。
-    [ValidateSet('1.21.11', '26.2', 'emt-260925')][string]$Line = '26.2',
+    # emt-263：2026-10-20 新增 —— 同一套源码升级到 MC 26.3（依赖取 deps\mc-26.3，产物后缀 -26.3）。
+    [ValidateSet('1.21.11', '26.2', 'emt-260925', 'emt-263')][string]$Line = '26.2',
     [string]$Name,
     [switch]$NoPackage,
     [string]$Jdk,
@@ -48,9 +51,10 @@ param(
 $ErrorActionPreference = 'Stop'
 $Root     = Split-Path -Parent $PSScriptRoot
 $LineDir  = Join-Path $Root "versions\$Line"
-# emt-260925 与 26.2 共用同一套编译期依赖（同一个 MC 版本）
-$DepsLine = if ($Line -eq 'emt-260925') { '26.2' } else { $Line }
-$DepsDir  = Join-Path $Root "deps\mc-$DepsLine"
+# 每条构建线对应的 MC 版本：决定依赖目录 deps\mc-<MC版本> 与产物名后缀
+$McVerOfLine = @{ '1.21.11' = '1.21.11'; '26.2' = '26.2'; 'emt-260925' = '26.2'; 'emt-263' = '26.3' }
+$McVer    = $McVerOfLine[$Line]
+$DepsDir  = Join-Path $Root "deps\mc-$McVer"
 $SrcDir   = Join-Path $LineDir 'src'
 $ResDir   = Join-Path $LineDir 'resources'
 $BuildDir = Join-Path $LineDir 'build'
@@ -167,7 +171,7 @@ if (-not $OutJar) {
         # emt-260925 线是用户的改版分支（litematica-printer-EMT-Azusa），文件名统一带这个品牌；
         # 字母仍按「当天第几次构筑」递增：老前缀与新前缀的产物一起数，避免重名。
         $prefixAlt = "litematica-printer-EMT-1.4-$stamp"
-        if ($Line -eq 'emt-260925') { $prefix = "litematica-printer-EMT-Azusa-$stamp" }
+        if ($Line -like 'emt-*') { $prefix = "litematica-printer-EMT-Azusa-$stamp" }
         $used = @()
         $used += @(Get-ChildItem -LiteralPath $DistDir -Filter "$prefix*.jar" -File -ErrorAction SilentlyContinue |
             ForEach-Object { $_.BaseName.Substring($prefix.Length, 1) })
@@ -184,8 +188,8 @@ if (-not $OutJar) {
             $next = if ($idx -ge 0 -and $idx + 1 -lt $letters.Length) { [string]$letters[$idx + 1] } else { 'z' }
         }
         $Name = "$prefix$next"
-        # 26.2 线追加 -26.2 后缀（2026-09-25 起的统一命名规范；此前是 +26.2）
-        if ($Line -ne '1.21.11') { $Name = "$Name-26.2" }
+        # 26.2 / 26.3 线追加 -<MC版本> 后缀（2026-09-25 起的统一命名规范；此前是 +26.2）
+        if ($Line -ne '1.21.11') { $Name = "$Name-$McVer" }
     }
     $Name = [System.IO.Path]::GetFileName($Name)
     if ($Name -notlike '*.jar') { $Name = "$Name.jar" }

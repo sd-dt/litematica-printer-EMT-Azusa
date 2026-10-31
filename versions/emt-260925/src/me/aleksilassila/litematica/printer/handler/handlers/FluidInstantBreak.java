@@ -42,16 +42,21 @@ import net.minecraft.world.level.material.Fluids;
  * （与 LPCTools 的默认列表同源）。</p>
  *
  * <p>与本模组的差异（适配说明）：LPCTools 以玩家交互距离为工作区域、按 ShapeList
- * 限定范围；这里复用排流体的自扫描方盒（水平半径 8、垂直 -3 ~ +1），
- * 破坏走本模组统一的强制破坏队列（{@link BreakUtils#addForced}）。</p>
+ * 限定范围；这里复用排流体的自扫描方盒（水平半径 = workRange + fluidScanMargin、
+ * 垂直 {@link #DY_MIN} ~ 水平半径），破坏走本模组统一的强制破坏队列
+ * （{@link BreakUtils#addForced}）。</p>
  */
 public final class FluidInstantBreak {
    private FluidInstantBreak() {
    }
 
-   private static final int RANGE = 8;
+   /**
+    * 水平扫描半径：{@code workRange + fluidScanMargin}（2026-10-24 之前硬编码 8，
+    * 与原版交互距离 5 相比外扩 3 格 —— 即用户反馈的「选区偏移多出去三格」）。
+    * 垂直范围：下到 {@link #DY_MIN}，上到水平半径 {@code range} —— 水也可能在玩家上方
+    * （水墙/水柱），原来只扫到 +1，表现为「必须飞到水源上方才排得动」。
+    */
    private static final int DY_MIN = -3;
-   private static final int DY_MAX = 1;
    /**
     * 每 tick 最多秒破几个格子 —— 抄挖掘部分的节奏：破坏队列对"能秒破"的方块
     * （挖掘进度已满）会在同一 tick 内连续 pop 多个，放宽预算让视觉上一次碎一片。
@@ -96,11 +101,12 @@ public final class FluidInstantBreak {
    private static int tickAttacks(FluidHandler handler) {
       int attacks = 0;
       BlockPos origin = handler.player().blockPosition();
+      int range = FluidHandler.scanRange(handler);
 
       // 层高高的先排（自上而下）：上层清干净了，下面的水失去遮拦也更容易顺流排掉
-      for (int dy = DY_MAX; dy >= DY_MIN && attacks < MAX_ATTACKS_PER_TICK; dy--) {
-         for (int dx = -RANGE; dx <= RANGE && attacks < MAX_ATTACKS_PER_TICK; dx++) {
-            for (int dz = -RANGE; dz <= RANGE && attacks < MAX_ATTACKS_PER_TICK; dz++) {
+      for (int dy = range; dy >= DY_MIN && attacks < MAX_ATTACKS_PER_TICK; dy--) {
+         for (int dx = -range; dx <= range && attacks < MAX_ATTACKS_PER_TICK; dx++) {
+            for (int dz = -range; dz <= range && attacks < MAX_ATTACKS_PER_TICK; dz++) {
                BlockPos pos = origin.offset(dx, dy, dz);
                if (handler.isOnCooldown("instantBreak", pos)) {
                   continue;
@@ -172,12 +178,13 @@ public final class FluidInstantBreak {
    private static void tickFills(FluidHandler handler) {
       int fills = 0;
       BlockPos origin = handler.player().blockPosition();
+      int range = FluidHandler.scanRange(handler);
 
       // 层高高的先排（自上而下，与秒破段一致）
       fillLoop:
-      for (int dy = DY_MAX; dy >= DY_MIN && fills < MAX_FILLS_PER_TICK; dy--) {
-         for (int dx = -RANGE; dx <= RANGE && fills < MAX_FILLS_PER_TICK; dx++) {
-            for (int dz = -RANGE; dz <= RANGE && fills < MAX_FILLS_PER_TICK; dz++) {
+      for (int dy = range; dy >= DY_MIN && fills < MAX_FILLS_PER_TICK; dy--) {
+         for (int dx = -range; dx <= range && fills < MAX_FILLS_PER_TICK; dx++) {
+            for (int dz = -range; dz <= range && fills < MAX_FILLS_PER_TICK; dz++) {
                BlockPos pos = origin.offset(dx, dy, dz);
                if (handler.isOnCooldown("instantFill", pos)) {
                   continue;
@@ -202,9 +209,7 @@ public final class FluidInstantBreak {
                   return;
                }
 
-               Action action = new Action()
-                  .setActionSource(ActionManager.ActionSource.FLUID)
-                  .queueAction(pos, Direction.UP, false, handler.player());
+               Action action = FluidHandler.createFillAction(handler, pos);
                ActionManager.INSTANCE.setNeedWaitModifyLookFromAction(action.getNeedWaitModifyLook());
                if (ActionManager.INSTANCE.sendQueue(handler.player()).isWaiting()) {
                   // 等服务器回包：本 tick 不再发新的放置（与简单排流体同款保护）

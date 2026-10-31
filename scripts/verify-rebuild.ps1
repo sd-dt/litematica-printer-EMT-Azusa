@@ -17,7 +17,7 @@
         要比就显式 -Against 并自行判断。
 #>
 param(
-    [Parameter(Mandatory = $true)][ValidateSet('1.21.11', '26.2', 'emt-260925')][string]$Line,
+    [Parameter(Mandatory = $true)][ValidateSet('1.21.11', '26.2', 'emt-260925', 'emt-263')][string]$Line,
     [string]$Against,
     [string[]]$AllowOrphan = @()
 )
@@ -31,14 +31,18 @@ function Fail($msg) { Write-Host "[FAIL] $msg" -ForegroundColor Red; exit 1 }
 function Ok($msg)   { Write-Host "[ OK ] $msg" -ForegroundColor Green }
 function Info($msg) { Write-Host "[ .. ] $msg" -ForegroundColor Cyan }
 
+$McVerOfLine = @{ '1.21.11' = '1.21.11'; '26.2' = '26.2'; 'emt-260925' = '26.2'; 'emt-263' = '26.3' }
+$McVer = $McVerOfLine[$Line]
+
 if (-not $Against) {
-    # 26.2 线：新旧两种后缀都收（新 -26.2 / 旧 +26.2）；1.21.11 线：排除掉带 26.2 后缀的
-    if ($Line -ne '1.21.11') {
+    # 26.x 线：新旧两种后缀都收（新 -26.x / 旧 +26.2）；1.21.11 线：排除掉带 26.x 后缀的
+    if ($McVer -ne '1.21.11') {
         $cand = @(Get-ChildItem -LiteralPath $DistDir -Filter 'litematica-printer-EMT-*dt*.jar' -File |
-                  Where-Object { $_.Name -like '*-26.2.jar' -or $_.Name -like '*+26.2.jar' } | Sort-Object Name)
+                  Where-Object { $_.Name -like "*$McVer.jar" -or $_.Name -like "*+$McVer.jar" } | Sort-Object Name)
     } else {
         $cand = @(Get-ChildItem -LiteralPath $DistDir -Filter 'litematica-printer-EMT-*dt*.jar' -File |
-                  Where-Object { $_.Name -notlike '*-26.2.jar' -and $_.Name -notlike '*+26.2.jar' } | Sort-Object Name)
+                  Where-Object { $_.Name -notlike '*-26.2.jar' -and $_.Name -notlike '*-26.3.jar' -and
+                                 $_.Name -notlike '*+26.2.jar' -and $_.Name -notlike '*+26.3.jar' } | Sort-Object Name)
     }
     if ($cand.Count -eq 0) { Fail "dist 里没有可比的 jar：$DistDir" }
     $Against = $cand[-1].FullName

@@ -13,10 +13,14 @@ import me.aleksilassila.litematica.printer.handler.handlers.GuiHandler;
 import me.aleksilassila.litematica.printer.handler.handlers.MineHandler;
 import me.aleksilassila.litematica.printer.handler.handlers.PrintHandler;
 import me.aleksilassila.litematica.printer.printer.ActionManager;
+import me.aleksilassila.litematica.printer.printer.BlockPosCooldownManager;
+import me.aleksilassila.litematica.printer.printer.PrintTaskController;
 import me.aleksilassila.litematica.printer.printer.zxy.inventory.InventoryUtils;
 import me.aleksilassila.litematica.printer.utils.BreakUtils;
 import me.aleksilassila.litematica.printer.utils.EatUtils;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
+import org.jetbrains.annotations.Nullable;
 
 public class ClientPlayerTickManager {
    public static final Minecraft mc = Minecraft.getInstance();
@@ -28,7 +32,32 @@ public class ClientPlayerTickManager {
    public static final BedrockHandler BEDROCK = new BedrockHandler();
    private static int packetTick;
    private static long currentHandlerTime;
+   /** 上一次 tick 看到的客户端世界对象（只用于「对象身份」比较，不参与业务） */
+   @Nullable
+   private static ClientLevel lastLevel;
    public static final ImmutableList<ClientPlayerTickHandler> VALUES = ImmutableList.of(GUI, PRINT, FILL, FLUID, MINE, BEDROCK);
+
+   /**
+    * 换世界/重连检测：用 ClientLevel 的对象身份比较。
+    * 不能用 dimension() 之类的逻辑键 —— 同一维度退出存档再进（或重连）维度键相同，检测不到，
+    * 旧会话的冷却/重试/保留量会继续生效。
+    */
+   public static void checkDimensionChange(@Nullable ClientLevel level) {
+      if (level != lastLevel) {
+         lastLevel = level;
+         if (level != null) {
+            resetRuntimeState();
+         }
+      }
+   }
+
+   public static void resetRuntimeState() {
+      PrintTaskController.INSTANCE.reset();
+      BreakUtils.INSTANCE.resetRuntime();
+      ActionManager.INSTANCE.resetRuntime();
+      PRINT.resetFastRetry();
+      BlockPosCooldownManager.INSTANCE.clearAllCooldowns();
+   }
 
    public static void tick() {
       GoManager.INSTANCE.tick();

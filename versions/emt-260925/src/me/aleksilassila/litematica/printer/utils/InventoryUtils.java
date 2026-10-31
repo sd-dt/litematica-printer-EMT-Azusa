@@ -814,6 +814,139 @@ public class InventoryUtils {
       return true;
    }
 
+   /**
+    * 选取方块（pick block）腾位：Litematica 可选取的快捷栏槽（PICK_BLOCKABLE_SLOTS）全被工具/可损耗物品占满时，
+    * 它只会报「未找到合适的快捷栏槽位」，不会自己挪东西。这里把其中一个工具挪进背包空槽，腾出一个能放建材的槽。
+    *
+    * @return 腾出来的快捷栏槽号（0~8）；腾不出来返回 -1（此时保留原版提示，不做静默处理）
+    */
+   public static int tryFreePickBlockSlot(Player player) {
+      if (player == null || client.gameMode == null) {
+         return -1;
+      }
+      // 开着容器界面时槽位号对应的不是玩家背包，不能乱点
+      if (player.containerMenu != player.inventoryMenu) {
+         return -1;
+      }
+      if (!Configs.Print.FREE_PICK_BLOCK_SLOT.getBooleanValue()) {
+         return -1;
+      }
+
+      Inventory inventory = player.getInventory();
+      // 背包（9~35）有空槽最好：工具直接挪进去，不跟别的物品挤
+      int emptySlot = -1;
+      for (int slot = 9; slot < 36; slot++) {
+         if (inventory.getItem(slot).isEmpty()) {
+            emptySlot = slot;
+            break;
+         }
+      }
+
+      int selectedSlot = getSelectedSlot(inventory);
+      for (int hotbarSlot : InventoryUtilsAccessor.getPICK_BLOCKABLE_SLOTS()) {
+         if (hotbarSlot == selectedSlot) {
+            // 不动手上正在用的那个槽
+            continue;
+         }
+         ItemStack stack = inventory.getItem(hotbarSlot);
+         if (stack.isEmpty()) {
+            continue;
+         }
+         if (isShulkerItem(stack.getItem())) {
+            // 潜影盒不挪：里面可能装着东西，换出去容易丢东西/打乱整理
+            continue;
+         }
+         if (!stack.isDamageableItem()) {
+            // 只挪工具/可损耗物品；普通方块本来就不该占位，真占了也不动它
+            continue;
+         }
+
+         if (emptySlot >= 0) {
+            // 1) 本地立即交换：本次 pick block 马上就能用上腾出来的槽
+            inventory.setItem(emptySlot, stack.copy());
+            inventory.setItem(hotbarSlot, ItemStack.EMPTY);
+            // 2) 原版 SWAP 点击让服务端做同样的交换；背包槽直接用槽号 9~35，button 是快捷栏序号 0~8
+            client.gameMode
+               .handleContainerInput(player.containerMenu.containerId, emptySlot, hotbarSlot, ContainerInput.SWAP, player);
+            return hotbarSlot;
+         }
+
+         // 背包没有空槽（长期存档的常态）：把工具和「不在可选取列表、且不是工具」的快捷栏槽对调。
+         // 换完之后这个可选槽里是普通物品，canPickToSlot 就能通过，pick block 会把目标方块塞进来。
+         int swapSlot = findHotbarSlotToTrade(inventory, hotbarSlot);
+         if (swapSlot >= 0) {
+            ItemStack other = inventory.getItem(swapSlot);
+            inventory.setItem(swapSlot, stack.copy());
+            inventory.setItem(hotbarSlot, other.copy());
+            client.gameMode
+               .handleContainerInput(player.containerMenu.containerId, swapSlot, hotbarSlot, ContainerInput.SWAP, player);
+            return hotbarSlot;
+         }
+      }
+
+      // 连可对调的槽都没有（例如 pickBlockableSlots 配了 1~9 且背包全满）：保留原版提示，同时留一条可查的日志
+      logPickBlockFreeFailure(inventory, selectedSlot, emptySlot);
+      return -1;
+   }
+
+   /**
+    * 找一个能和 {@code hotbarSlot} 对调的快捷栏槽：不在可选取列表、不是当前选中槽、不是潜影盒、
+    * 也不装工具/可损耗物（对调后可选槽里必须是「普通物品」，否则 canPickToSlot 还是不放行）。
+    */
+   private static int findHotbarSlotToTrade(Inventory inventory, int hotbarSlot) {
+      int selectedSlot = getSelectedSlot(inventory);
+      for (int slot = 0; slot < 9; slot++) {
+         if (slot == hotbarSlot || slot == selectedSlot) {
+            continue;
+         }
+         boolean pickable = false;
+         for (int candidate : InventoryUtilsAccessor.getPICK_BLOCKABLE_SLOTS()) {
+            if (candidate == slot) {
+               pickable = true;
+               break;
+            }
+         }
+         if (pickable) {
+            continue;
+         }
+         ItemStack stack = inventory.getItem(slot);
+         if (stack.isEmpty()) {
+            return slot;
+         }
+         if (isShulkerItem(stack.getItem()) || stack.isDamageableItem()) {
+            continue;
+         }
+         return slot;
+      }
+      return -1;
+   }
+
+   private static long lastPickBlockFreeLogTime;
+
+   /** 腾位失败时写一条限流日志，方便对着 latest.log 判断到底是「背包没空槽」还是「可选取槽全是工具」 */
+   private static void logPickBlockFreeFailure(Inventory inventory, int selectedSlot, int emptySlot) {
+      long now = System.currentTimeMillis();
+      if (now - lastPickBlockFreeLogTime < 3000L) {
+         return;
+      }
+      lastPickBlockFreeLogTime = now;
+      StringBuilder slots = new StringBuilder();
+      for (int slot : InventoryUtilsAccessor.getPICK_BLOCKABLE_SLOTS()) {
+         ItemStack stack = inventory.getItem(slot);
+         slots.append(slot).append('=');
+         if (stack.isEmpty()) {
+            slots.append("empty");
+         } else {
+            slots.append(stack.getItem()).append('x').append(stack.getCount());
+            if (stack.isDamageableItem()) {
+               slots.append("(dmg)");
+            }
+         }
+         slots.append(' ');
+      }
+      LOGGER.info("[pick-block] 腾位失败：背包空槽={} 选中槽={} 可选取槽内容={}", emptySlot, selectedSlot, slots.toString().trim());
+   }
+
    /** 快捷栏选中：先改本地选中槽，再发原版 UpdateSelectedSlot 包（照 Tweakeroo：不依赖「发包放置」开关） */
    private static void setHotbarSlotForTool(int slot, Inventory inventory) {
       setSelectedSlot(inventory, slot);

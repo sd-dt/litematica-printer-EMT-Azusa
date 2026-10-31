@@ -64,6 +64,7 @@ public class BreakUtils {
    private static List<String> fluidListSnapshot = List.of();
    private static FluidAvoidStrategyType fluidStrategySnapshot;
    private static boolean fluidMatcherInitialized;
+   private static int fluidMatchModeRevision = -1;
    private static long lastPlayerMineGameTime = -1L;
 
    private BreakUtils() {
@@ -96,7 +97,8 @@ public class BreakUtils {
    private static void ensureFluidAvoidMatcher() {
       List<String> configured = List.copyOf(Configs.Mine.BREAK_FLUID_LIST.getStrings());
       FluidAvoidStrategyType strategy = (FluidAvoidStrategyType)Configs.Mine.BREAK_FLUID_STRATEGY.getOptionListValue();
-      if (fluidMatcherInitialized && fluidListSnapshot.equals(configured)) {
+      int rev = PinYinSearchUtils.getMatchModeRevision();
+      if (fluidMatcherInitialized && rev == fluidMatchModeRevision && fluidListSnapshot.equals(configured)) {
          fluidStrategySnapshot = strategy;
       } else {
          fluidAvoidBlocks.clear();
@@ -116,6 +118,7 @@ public class BreakUtils {
 
          fluidListSnapshot = configured;
          fluidStrategySnapshot = strategy;
+         fluidMatchModeRevision = rev;
          fluidMatcherInitialized = true;
       }
    }
@@ -208,7 +211,19 @@ public class BreakUtils {
     * "排流体把工具换好了、主流程又把填充物换回手上" 的互相打断。
     */
    public static boolean autoSwitchToolIfEnabled(@Nullable BlockPos pos, @Nullable BlockState blockState) {
-      return !Configs.Core.AUTO_TOOL_SWITCH.getBooleanValue() ? false : trySwitchToEffectiveTool(pos, blockState);
+      if (!Configs.Core.AUTO_TOOL_SWITCH.getBooleanValue()) {
+         return false;
+      }
+
+      // ★ 中央闸门：破坏队列正在挖某一格时，换手会让服务端立刻清零那一格的挖掘进度，
+      //   表现就是"挖到一半就停 / 换目标"。以前这条判定散在排流体自己那边，
+      //   任何新调用点忘了判就会退化成互相打断；现在在这里一刀切掉。
+      BlockPos active = INSTANCE.breakPos;
+      if (active != null && !active.equals(pos)) {
+         return false;
+      }
+
+      return trySwitchToEffectiveTool(pos, blockState);
    }
 
    public static boolean trySwitchToEffectiveTool(BlockPos pos, BlockState blockState) {
@@ -459,73 +474,88 @@ public class BreakUtils {
    }
 
    public void onTick() {
-      // 破坏动作同样受限流器管：令牌用尽就本 tick 不动手（下 tick 自然重试）
-      if (!PacketRateLimiter.allowAction()) {
-         return;
-      }
       LocalPlayer player = client.player;
       ClientLevel level = client.level;
       if (player != null && level != null) {
          if (!Configs.Mine.BREAK_NON_BLOCKING.getBooleanValue() || !isPlayerMining()) {
             if (this.externalDestroyLockTicks <= 0) {
-               if (this.breakPos != null || !this.breakQueue.isEmpty()) {
-                  if (this.breakPos == null) {
-                     while (!this.breakQueue.isEmpty()) {
-                        BlockPos pos = this.breakQueue.poll();
-                        this.queuedBreaks.remove(pos);
-                        if (pos != null
-                           && PlayerUtils.canInteracted(pos)
-                           && this.canBreakQueued(pos)
-                           && breakRestriction(level, pos, level.getBlockState(pos))) {
-                           // 强制挖除的格位不走秒破：秒破分支直接返回 COMPLETED，用不上工具，
-                           // 会把"先换镐子再挖"这条链路整段跳过。
-                           this.instantMineSuppressed = this.forcedBreaks.contains(pos.asLong());
-                           BlockBreakResult result = this.continueDestroyBlock(pos, Direction.DOWN);
-                           this.instantMineSuppressed = false;
-                           if (result != BlockBreakResult.FAILED) {
-                              this.forcedBreaks.remove(pos.asLong());
-                           }
-
-                           if (result == BlockBreakResult.IN_PROGRESS) {
-                              this.breakPos = pos;
-                              break;
-                           }
-
-                           if (result == BlockBreakResult.COMPLETED || result == BlockBreakResult.COMPLETED_WAIT) {
-                              this.markRecentlyBroken(pos);
-                              if (result == BlockBreakResult.COMPLETED_WAIT) {
-                                 this.markPendingBroken(pos, ConfigUtils.getBreakCooldown());
-                              }
-                           }
-                        }
-                     }
-                  } else {
-                     if (!this.canBreakQueued(this.breakPos)) {
-                        this.forcedBreaks.remove(this.breakPos.asLong());
-                        this.breakPos = null;
-                        this.forceDelayedDestroy = false;
-                        this.onTick();
-                        return;
-                     }
-
-                     this.instantMineSuppressed = this.forcedBreaks.contains(this.breakPos.asLong())
-                        && shouldSuppressInstantMineFor(level.getBlockState(this.breakPos));
-                     BlockBreakResult resultx = this.continueDestroyBlock(this.breakPos, Direction.DOWN);
-                     this.instantMineSuppressed = false;
-                     if (resultx != BlockBreakResult.IN_PROGRESS) {
-                        if (resultx == BlockBreakResult.COMPLETED || resultx == BlockBreakResult.COMPLETED_WAIT) {
-                           this.markRecentlyBroken(this.breakPos);
-                           if (resultx == BlockBreakResult.COMPLETED_WAIT) {
-                              this.markPendingBroken(this.breakPos, ConfigUtils.getBreakCooldown());
-                           }
-                        }
-
-                        this.forcedBreaks.remove(this.breakPos.asLong());
-                        this.breakPos = null;
-                        this.forceDelayedDestroy = false;
-                        this.onTick();
-                     }
+               if (this.breakPos != null) {
+                  // ① 手上有正在挖的这一格：只续挖它，绝不换目标
+                  if (!this.canBreakQueued(this.breakPos)) {
+                     this.forcedBreaks.remove(this.breakPos.asLong());
+                     this.breakPos = null;
+                     this.forceDelayedDestroy = false;
+                     this.onTick();
+                     return;
                   }
+
+                  this.instantMineSuppressed = this.forcedBreaks.contains(this.breakPos.asLong())
+                     && shouldSuppressInstantMineFor(level.getBlockState(this.breakPos));
+                  BlockBreakResult resultx = this.continueDestroyBlock(this.breakPos, Direction.DOWN);
+                  this.instantMineSuppressed = false;
+                  if (resultx == BlockBreakResult.IN_PROGRESS) {
+                     return;
+                  }
+
+                  if (resultx == BlockBreakResult.COMPLETED || resultx == BlockBreakResult.COMPLETED_WAIT) {
+                     this.markRecentlyBroken(this.breakPos);
+                     if (resultx == BlockBreakResult.COMPLETED_WAIT) {
+                        this.markPendingBroken(this.breakPos, ConfigUtils.getBreakCooldown());
+                     }
+
+                     this.forcedBreaks.remove(this.breakPos.asLong());
+                  }
+                  // FAILED / ABORTED：保留「强制挖除」标记，等排流体自己的重试表重新入队
+                  // （以前这里一律清标记，重试时就会重新被「不挖掘流体」保护拦下 → 那一格永远挖不掉）
+
+                  this.breakPos = null;
+                  this.forceDelayedDestroy = false;
+                  this.onTick();
+                  return;
+               }
+
+               // ② 手上空闲：从队列里取下一格
+               while (!this.breakQueue.isEmpty()) {
+                  BlockPos pos = this.breakQueue.poll();
+                  this.queuedBreaks.remove(pos);
+                  if (pos == null) {
+                     continue;
+                  }
+
+                  if (!PlayerUtils.canInteracted(pos)
+                     || !this.canBreakQueued(pos)
+                     || !breakRestriction(level, pos, level.getBlockState(pos))) {
+                     // 够不着 / 已经挖掉 / 被保护区禁止：这一条作废，强制标记一起清掉（否则会无限增长）
+                     this.forcedBreaks.remove(pos.asLong());
+                     continue;
+                  }
+
+                  this.instantMineSuppressed = this.forcedBreaks.contains(pos.asLong());
+                  BlockBreakResult result = this.continueDestroyBlock(pos, Direction.DOWN);
+                  this.instantMineSuppressed = false;
+
+                  if (result == BlockBreakResult.IN_PROGRESS) {
+                     this.breakPos = pos;
+                     return;
+                  }
+
+                  if (result == BlockBreakResult.COMPLETED || result == BlockBreakResult.COMPLETED_WAIT) {
+                     this.markRecentlyBroken(pos);
+                     if (result == BlockBreakResult.COMPLETED_WAIT) {
+                        this.markPendingBroken(pos, ConfigUtils.getBreakCooldown());
+                     }
+
+                     this.forcedBreaks.remove(pos.asLong());
+                     continue;
+                  }
+
+                  if (result == BlockBreakResult.ABORTED) {
+                     // 让路（玩家自己在挖 / 主流程占用通道）：放回队尾等下一 tick，绝不丢
+                     this.add(pos);
+                     return;
+                  }
+
+                  // FAILED：保留强制标记，靠排流体重试
                }
             }
          }

@@ -111,6 +111,8 @@ public class BlockPosCooldownManager {
 
    public void clearAllCooldowns() {
       this.cooldowns.clear();
+      // 扫表节拍一并作废：否则换世界后可能长时间不再清扫，旧键继续残留
+      this.lastSweepTick = Long.MIN_VALUE;
    }
 
    private Long2LongOpenHashMap mapForWrite(ClientLevel level, String type) {

@@ -316,7 +316,8 @@ public class BlockUtils {
          if (!neighborCurrentState.hasProperty(SlabBlock.TYPE)
             || neighborCurrentState.getValue(SlabBlock.TYPE) == SlabType.DOUBLE
             || neighborCurrentState.getValue(SlabBlock.TYPE) == requiredHalf) {
-            sides.put(side, Vec3.atLowerCornerOf(getVector(requiredDir)).scale(0.25));
+            // 偏移在使用时还会再乘 0.5：0.5 → 侧面命中 1/4 / 3/4 高度，离上下分界线更远
+            sides.put(side, Vec3.atLowerCornerOf(getVector(requiredDir)).scale(0.5));
          }
       }
 

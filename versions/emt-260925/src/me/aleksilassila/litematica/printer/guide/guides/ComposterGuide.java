@@ -16,6 +16,7 @@ import net.minecraft.world.level.block.ComposterBlock;
 
 public class ComposterGuide extends Guide {
    private static List<String> compostWhitelistCache = new ArrayList<>();
+   private static int compostMatchModeRevision = -1;
    private static Item[] whitelistItemsCache = new Item[0];
 
    public ComposterGuide(SchematicBlockContext context) {
@@ -33,7 +34,9 @@ public class ComposterGuide extends Guide {
             return Result.PASS;
          } else {
             List<String> whitelist = Configs.Print.FILL_COMPOSTER_WHITELIST.getStrings();
-            if (!whitelist.equals(compostWhitelistCache)) {
+            int rev = PinYinSearchUtils.getMatchModeRevision();
+            if (rev != compostMatchModeRevision || !whitelist.equals(compostWhitelistCache)) {
+               compostMatchModeRevision = rev;
                compostWhitelistCache = new ArrayList<>(whitelist);
                List<Item> whitelistItems = new ArrayList<>();
 

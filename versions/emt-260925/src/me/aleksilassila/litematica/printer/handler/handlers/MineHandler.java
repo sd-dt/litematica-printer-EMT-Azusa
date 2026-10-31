@@ -11,6 +11,7 @@ import me.aleksilassila.litematica.printer.config.Configs;
 import me.aleksilassila.litematica.printer.enums.ExcavateListMode;
 import me.aleksilassila.litematica.printer.enums.PrintModeType;
 import me.aleksilassila.litematica.printer.handler.ClientPlayerTickHandler;
+import me.aleksilassila.litematica.printer.handler.ClientPlayerTickManager;
 import me.aleksilassila.litematica.printer.mixin_extension.BlockBreakResult;
 import me.aleksilassila.litematica.printer.printer.ActionManager;
 import me.aleksilassila.litematica.printer.printer.BlockPosCooldownManager;
@@ -35,6 +36,17 @@ public class MineHandler extends ClientPlayerTickHandler {
 
    public MineHandler() {
       super("mine", PrintModeType.MINE, Configs.Core.MINE, Configs.Mine.MINE_SELECTION_TYPE, true);
+   }
+
+   @Override
+   public void tick() {
+      // 严格串行「先排完水再挖掘」：排流体本 tick 还有活干时，挖掘完全不开工。
+      // 排流体自己的"先铺后挖"走 FluidHandler 内部，不受这里影响。
+      if (ClientPlayerTickManager.FLUID.hasPendingFluidWork()) {
+         return;
+      }
+
+      super.tick();
    }
 
    private boolean isParallelMode() {

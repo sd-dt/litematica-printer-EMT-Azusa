@@ -3,6 +3,7 @@ package me.aleksilassila.litematica.printer.utils;
 import java.util.HashMap;
 import java.util.Map;
 import me.aleksilassila.litematica.printer.config.Configs;
+import me.aleksilassila.litematica.printer.printer.PlacementPending;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
@@ -39,6 +40,8 @@ public final class PacketSoundConfirmationTracker {
    public static void confirmServerBlockUpdate(BlockPos pos, BlockState updatedState) {
       ClientLevel level = Minecraft.getInstance().level;
       if (level != null && pos != null && updatedState != null) {
+         // 服务端方块更新是唯一可靠的确认来源：只有状态真的变了才放行该坐标的再次点击
+         PlacementPending.confirm(level, pos.asLong(), updatedState);
          prune(level.getGameTime());
          PacketSoundConfirmationTracker.PendingSound pending = PENDING_SOUNDS.get(pos);
          if (pending != null) {

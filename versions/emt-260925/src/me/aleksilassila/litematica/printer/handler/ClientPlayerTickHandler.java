@@ -605,12 +605,22 @@ public abstract class ClientPlayerTickHandler extends ConfigUtils {
          && this.selectionType.getOptionListValue()
             == me.aleksilassila.litematica.printer.enums.MineSelectionType.PLANE_UNBOUNDED;
       if (!planeUnbounded
-         && (isSchematic ? !LitematicaUtils.isSchematicBlock(pos) : !LitematicaUtils.isWithinSelection1ModeRange(pos))) {
+         && (isSchematic ? !LitematicaUtils.isSchematicBlock(pos)
+            : !LitematicaUtils.isWithinSelection1ModeRange(pos, this.rangeHorizontalMargin()))) {
          return false;
       }
 
       return this.selectionType == null
          || PlayerUtils.isPositionInSelectionRange(this.player, pos, this.selectionType);
+   }
+
+   /**
+    * 选区在水平方向允许外扩的格数（默认 0）。
+    * <p>排流体覆盖「选区东西南北各外扩 1 格」这一圈，所以它 override 成 1；
+    * 其它处理器保持 0，不受影响。</p>
+    */
+   protected int rangeHorizontalMargin() {
+      return 0;
    }
 
    @Nullable
